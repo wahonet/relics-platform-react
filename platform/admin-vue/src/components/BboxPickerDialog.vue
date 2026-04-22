@@ -56,7 +56,7 @@ import { Delete } from '@element-plus/icons-vue';
 const props = defineProps<{
   modelValue: boolean;
   initialBbox?: [number, number, number, number] | null;
-  /** 可选：地图视图落点参考（以此 fitBounds 或 setView） */
+  /** 地图视图的参考点(用于 fitBounds 或 setView) */
   points?: Array<{ lng: number | null; lat: number | null }>;
 }>();
 
@@ -71,10 +71,10 @@ let base: TileLayer | null = null;
 let rect: Rectangle | null = null;
 const layer = ref<'sat' | 'osm'>('sat');
 
-/** bbox: [minLng, minLat, maxLng, maxLat] */
+/** bbox 格式: [minLng, minLat, maxLng, maxLat] */
 const current = ref<[number, number, number, number] | null>(null);
 
-// 绘制交互状态
+// 绘制状态。
 let drawing = false;
 let startLatLng: L.LatLng | null = null;
 
@@ -109,7 +109,7 @@ function ensureMap() {
   base = makeBase(layer.value);
   base.addTo(map);
 
-  // 初始视图：优先 initialBbox；否则 fit 传入 points；否则默认范围
+  // 初始视图:initialBbox > points.fitBounds > 默认范围。
   if (props.initialBbox) {
     const [mnl, mnt, mxl, mxt] = props.initialBbox;
     current.value = [mnl, mnt, mxl, mxt];
@@ -179,7 +179,7 @@ function bindDrawHandlers() {
   if (!map) return;
   const container = map.getContainer();
 
-  // Shift 未按下时也允许框选：先禁 dragging，松开后恢复
+  // 未按 Shift 也允许框选:按下瞬间禁用拖拽,松开恢复。
   const onDown = (ev: MouseEvent) => {
     if (ev.button !== 0) return;
     if (!map) return;
@@ -210,7 +210,7 @@ function bindDrawHandlers() {
       const b = rect.getBounds();
       const sw = b.getSouthWest();
       const ne = b.getNorthEast();
-      // 忽略过小（误点）的矩形
+      // 忽略过小(误点)的矩形。
       if (Math.abs(ne.lng - sw.lng) < 1e-5 && Math.abs(ne.lat - sw.lat) < 1e-5) {
         try { rect.remove(); } catch { /* noop */ }
         rect = null;
@@ -225,7 +225,7 @@ function bindDrawHandlers() {
   window.addEventListener('mousemove', onMove);
   window.addEventListener('mouseup', onUp);
 
-  // 随 map remove 清理
+  // 随 map.remove() 一起清理监听。
   map.on('unload', () => {
     container.removeEventListener('mousedown', onDown);
     window.removeEventListener('mousemove', onMove);

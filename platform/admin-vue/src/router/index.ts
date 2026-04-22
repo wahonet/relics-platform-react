@@ -1,8 +1,7 @@
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 
-// 用 hash 模式更适合嵌入到 FastAPI 的 /admin-ui/ 路径下，
-// 避免刷新时因前端路由 404 需要在后端再配 catch-all。
+// 使用 hash 模式,嵌入到 FastAPI 的 /admin-ui/ 下时刷新无需后端 catch-all。
 const routes: RouteRecordRaw[] = [
   {
     path: '/login',
@@ -61,7 +60,7 @@ const router = createRouter({
 router.beforeEach((to) => {
   const auth = useAuthStore();
   if (to.meta?.public) {
-    // 登录页：已登录则回首页
+    // 已登录则绕过登录页。
     if (auth.authed && to.name === 'login') return { path: '/dashboard' };
     return true;
   }

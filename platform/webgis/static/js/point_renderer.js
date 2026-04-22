@@ -1,16 +1,15 @@
-// PointRenderer —— 基于 Cesium.PointPrimitiveCollection 的高性能点渲染。
+// PointRenderer —— 基于 PointPrimitiveCollection 的高性能点渲染。
 //
-// 替代原有的 "每点一个 Entity + Billboard(dataURL)" 模式：
-// - 单次 drawcall 批量渲染，5 万点稳定 55-60fps
-// - diffUpdate(list) 以 id 为 key 做增删改，不全量重建
-// - 颜色按国标 category 映射，大小按 rank 分级，国保/省保加金色描边
-// - 标签密度按 rank 分级显示距离，超过 300 个标签时整体隐藏
+// 取代早期"每点一个 Entity + dataURL Billboard"的方案:
+//   - 单次 drawcall 批量渲染,5 万点稳定 55-60 fps
+//   - diffUpdate(list) 以 id 为 key 做增删改,避免全量重建
+//   - 颜色按 category 映射、大小按 rank 分级,国保/省保或 has_3d 金边
+//   - 标签按 rank 升序分配预算(LABEL_BUDGET=300),高级别优先
 //
-// 依赖全局：window.Cesium, window.Dict, window.Bus
-// 输出：window.PointRenderer（类），属于非 ES module 暴露方式。
+// 依赖全局 Cesium / Dict / Bus;导出 window.PointRenderer。
 (function () {
-    const LABEL_BUDGET = 300;          // 单视口内累计标签数上限
-    const NAME_TRUNC = 12;             // 名称超过此长度截断
+    const LABEL_BUDGET = 300;   // 单视口标签数上限
+    const NAME_TRUNC = 12;      // 名称截断长度
 
     function truncateName(name) {
         if (!name) return '';
@@ -25,10 +24,9 @@
             this.coll = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
             this.labelColl = viewer.scene.primitives.add(new Cesium.LabelCollection());
 
-            // id -> { primitive, label, record }
+            // id → { primitive, label, record }
             this.map = new Map();
 
-            // 全局开关
             this._visible = true;
             this._labelsEnabled = true;
             this._labelFontSize = 14;
@@ -40,7 +38,7 @@
             const next = new Set();
             for (const r of list) if (r && r.id) next.add(r.id);
 
-            // 先移除不再命中的
+            // 先移除不再命中的条目。
             for (const [id, rec] of this.map) {
                 if (!next.has(id)) {
                     try { this.coll.remove(rec.primitive); } catch (e) {}
@@ -49,9 +47,7 @@
                 }
             }
 
-            // 标签预算：不是"总量超就全关"，而是按 rank 升序分配，
-            // 国保/省保优先拿到标签，预算用完（LABEL_BUDGET）后低等级不再给。
-            // 这样即便视口内 5000 点，国保省保的名字仍然能看见。
+            // 标签预算按 rank 升序分配:高级别优先,预算用尽后低等级不再给标签。
             const wantsLabel = new Set();
             if (this._labelsEnabled) {
                 const sorted = list.slice().sort((a, b) => {
@@ -82,7 +78,7 @@
                 const existing = this.map.get(r.id);
 
                 if (existing) {
-                    // 数据没变就跳过；只在关键字段变化时更新属性
+                    // 只在关键字段变化时更新 primitive 属性。
                     const rec = existing.record;
                     if (rec.lng !== r.lng || rec.lat !== r.lat) {
                         existing.primitive.position = pos;
@@ -94,7 +90,6 @@
                         existing.primitive.pixelSize = size;
                     }
                     existing.record = r;
-                    // 标签按本次分级预算重新决定是否显示
                     const shouldHaveLabel = wantsLabel.has(r.id);
                     if (shouldHaveLabel && !existing.label) {
                         existing.label = this._addLabel(pos, r);
@@ -116,7 +111,7 @@
                     scaleByDistance: new Cesium.NearFarScalar(1e3, 1.2, 5e4, 0.6),
                     disableDepthTestDistance: Number.POSITIVE_INFINITY,
                     show: this._visible,
-                    // Cesium pick 会返回 picked.id；放一个带 _type 标记的对象用于区分
+                    // Cesium pick 会返回 picked.id;带 _type 标记用于区分路线点等。
                     id: { _type: 'relic', code: r.code, relicId: r.id },
                 });
                 const label = wantsLabel.has(r.id) ? this._addLabel(pos, r) : null;

@@ -1,4 +1,4 @@
-// 工作日志查看器：台账数据 + 基于 pdf.js 的自定义翻页阅读器。
+// 工作日志查看器:台账信息 + pdf.js 自定义翻页阅读。
 let _worklogData = null;
 let _worklogByDate = {};
 
@@ -241,7 +241,7 @@ function _escHtml(s) {
     return d.innerHTML;
 }
 
-// 台账里的文物名模糊匹配 allRelics，匹配上的渲染为可点击链接，可飞到该点位。
+// 台账中的文物名模糊匹配 allRelics:命中项渲染为可点击链接,跳转到地图点位。
 let _wlReturnDate = null;
 
 function _findRelic(name) {

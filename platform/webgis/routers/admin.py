@@ -1,8 +1,8 @@
-"""管理后台 API:触发 step 脚本、查任务、上传/即时处理 DOCX、
-查看整条数据管线的分步进度与详情。
+"""管理后台 API。
 
-脚本路径指向 platform/scripts/step0X_*.py,输入输出目录都走
-_common.get_paths(),路由里不出现硬编码路径。
+覆盖管线脚本触发、任务查询、DOCX 上传/即时处理、分步进度与详情、
+文物 CRUD / 审计 / 批量 / 导入导出等接口。所有路径均走 `_common.get_paths()`,
+禁止硬编码。
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ from data_loader import store  # noqa: E402
 
 router = APIRouter(prefix="/admin", tags=["管理"])
 
-# 脚本注册表:同时接受 stepNN 完整名称和前端使用的短别名。
+# 脚本注册表,同时接受 stepNN 完整名称与前端短别名。
 SCRIPTS: dict[str, Path] = {
     "step01_convert_docs":       _SCRIPTS_DIR / "step01_convert_docs.py",
     "step02_build_dataset":      _SCRIPTS_DIR / "step02_build_dataset.py",
@@ -58,7 +58,7 @@ SCRIPT_ALIAS: dict[str, str] = {
 
 
 def _resolve_script(name: str) -> str:
-    """前端可以传短名或 stepNN_xxx,统一解析到真实脚本键。"""
+    """把短别名或 stepNN_xxx 解析为真实脚本键。"""
     if name in SCRIPTS:
         return name
     if name in SCRIPT_ALIAS:
@@ -94,7 +94,7 @@ def _count_csv_rows(p: Path) -> int:
         return 0
     try:
         with p.open("r", encoding="utf-8-sig") as f:
-            return sum(1 for _ in f) - 1  # 减去表头
+            return sum(1 for _ in f) - 1
     except Exception:
         return 0
 
@@ -110,7 +110,7 @@ def _count_json_array(p: Path) -> int:
 
 
 def _progress_pct(done: int, total: int) -> float:
-    """进度百分比。total=0 但 done>0 时视为 100%(demo/归档场景)。"""
+    """进度百分比。total=0 且 done>0 视为 100%(demo / 归档场景)。"""
     if total <= 0:
         return 100.0 if done > 0 else 0.0
     return round(min(100.0, done / total * 100), 1)
@@ -127,7 +127,7 @@ def _count_geojson_features(p: Path) -> int:
 
 
 def _last_task_for(script_name: str) -> Optional[dict]:
-    """找这个脚本最近一次任务,用于在管线卡片上显示"最近运行时间"。"""
+    """取该脚本最近一次任务,供管线卡片显示"最近运行时间"。"""
     latest: Optional[tuple[str, dict]] = None
     for tid, t in _tasks.items():
         if t["script"] == script_name:
@@ -144,7 +144,7 @@ def _last_task_for(script_name: str) -> Optional[dict]:
 
 
 def _township_dirs() -> list[str]:
-    """列出 data/input/01_archives/ 下的一级子目录名(视作乡镇)。"""
+    """01_archives/ 下的一级子目录名,视作乡镇。"""
     ap = get_paths().input_archives
     if not ap.exists():
         return []
@@ -152,7 +152,7 @@ def _township_dirs() -> list[str]:
 
 
 def _strip_ordinal(name: str) -> str:
-    """'01示范街道' -> '示范街道',step02 里保持一致的做法。"""
+    """去掉目录序号前缀:'01示范街道' → '示范街道'(与 step02 一致)。"""
     return re.sub(r"^[\d_\-\s]+", "", name) or name
 
 
@@ -203,20 +203,14 @@ async def list_townships():
 # ── 新:整条管线分步状态 ─────────────────────────────────
 @router.get("/pipeline")
 async def pipeline_detailed():
-    """返回六步管线逐步进度,供后台竖排流程图使用。
+    """六步管线逐步进度,供后台竖排流程图使用。
 
-    每步包含:
-      id / name / icon / desc / flow('输入 → 输出')
-      input:  {total, label}
-      output: {total, label, extra?}
-      progress: 0~100
-      pending: 未处理数量(仅当 input/output 可比时)
-      runnable: 该步是否可运行(比如 step05 没工作日志会跳过)
-      last_run / artifact_mtime
+    每步字段:id / name / icon / desc / flow / input / output / progress /
+    pending / runnable / last_run / artifact_mtime。
     """
     paths = get_paths()
 
-    # step01: docx -> md  (按 archive_code 一一对应)
+    # step01: docx → md (按 archive_code 一一对应)
     docx_total = _count_docx(paths.input_archives)
     md_total = _count_files(paths.output_markdown, "*.md")
     step01 = {
@@ -228,14 +222,14 @@ async def pipeline_detailed():
         "input": {"total": docx_total, "label": "docx 档案"},
         "output": {"total": md_total, "label": "markdown 文件"},
         "pending": max(0, docx_total - md_total),
-        # 如果 input 为空但 output 已有产物(典型:demo 数据或仅随仓库携带 md),视为 100%
+        # input 为空而 output 有产物(demo 预烘焙场景)视为 100%。
         "progress": _progress_pct(md_total, docx_total),
         "runnable": docx_total > 0,
         "last_run": _last_task_for("step01_convert_docs"),
         "artifact_mtime": _mtime_str(paths.output_markdown),
     }
 
-    # step02: md -> dataset  (单次全量,csv 存在即视为 100%)
+    # step02: md → dataset (单次全量,csv 存在即视为 100%)
     master_csv = paths.output_dataset / "relics_master.csv"
     relics_json = paths.output_dataset / "relics_full.json"
     points_geo = paths.output_dataset / "relics_points.geojson"
@@ -265,7 +259,7 @@ async def pipeline_detailed():
         "artifact_mtime": _mtime_str(master_csv),
     }
 
-    # step03: docx -> photos  (按有索引记录的 archive_code 计完成)
+    # step03: docx → photos (按 photo_index 覆盖的 archive_code 计完成)
     photo_index = paths.output_dataset / "photo_index.csv"
     photo_covered = _codes_in_index(photo_index)
     step03 = {
@@ -287,7 +281,7 @@ async def pipeline_detailed():
         "artifact_mtime": _mtime_str(photo_index),
     }
 
-    # step04: docx -> drawings
+    # step04: docx → drawings
     drawing_index = paths.output_dataset / "drawing_index.csv"
     drawing_covered = _codes_in_index(drawing_index)
     step04 = {
@@ -309,7 +303,7 @@ async def pipeline_detailed():
         "artifact_mtime": _mtime_str(drawing_index),
     }
 
-    # step05: worklog xlsx -> pdf  (可选,无数据时跳过)
+    # step05: worklog xlsx → pdf (可选,无数据时跳过)
     worklog_xlsx = _count_files(paths.input_worklogs, "*.xlsx") + _count_files(paths.input_worklogs, "*.xls")
     worklog_pdf = _count_files(paths.output_worklogs, "*.pdf")
     step05 = {
@@ -328,7 +322,7 @@ async def pipeline_detailed():
         "artifact_mtime": _mtime_str(paths.output_worklogs),
     }
 
-    # step06: boundaries shp -> geojson
+    # step06: boundaries shp → geojson
     shp_total = _count_files(paths.input_boundaries, "*.shp") + _count_files(paths.input_boundaries, "*.geojson")
     b_county = paths.output_boundaries / "county.geojson"
     b_town = paths.output_boundaries / "townships.geojson"
@@ -391,12 +385,12 @@ def _codes_in_index(index_csv: Path) -> set[str]:
 # ── 新:某一步的明细条目 ─────────────────────────────────
 @router.get("/step/{step_id}/items")
 async def step_items(step_id: str):
-    """返回指定步骤的条目级详情,前端用于"查看详情"折叠区。
+    """返回指定步骤的条目级详情,供前端"查看详情"折叠区使用。
 
-    step01/step03/step04 → 按乡镇分组,列出每个 docx 的处理状态
-    step02               → 按 archive_code 列出每条文物的生成状态
-    step05               → 按 Excel 文件列出转换状态
-    step06               → 按边界层(县/镇/村)列出产出状态
+    step01/03/04 按乡镇分组列出 docx 状态;
+    step02 按 archive_code 列出生成状态;
+    step05 按 Excel 文件列出转换状态;
+    step06 按县/镇/村边界层列出产出状态。
     """
     step_id = _resolve_script(step_id)
     paths = get_paths()
@@ -414,7 +408,7 @@ async def step_items(step_id: str):
     if step_id == "step06_prepare_boundaries":
         return _items_step06(paths)
 
-    raise HTTPException(400, f"暂不支持查看 {step_id} 的详情")
+    raise HTTPException(400, f"不支持查看 {step_id} 的详情")
 
 
 def _items_step01(paths) -> dict:
@@ -435,7 +429,7 @@ def _items_step01(paths) -> dict:
             if docx.name.startswith("~$"):
                 continue
             stem = docx.stem
-            # md 一般命名为 <archive_code>_<name>_<ts>.md 或 <stem>_*.md
+            # md 命名形如 <archive_code>_<name>_<ts>.md 或 <stem>_*.md
             out_md = None
             for md in md_by_full_stem.values():
                 if md.stem.startswith(stem) or stem in md.stem:
@@ -466,7 +460,6 @@ def _items_step02(paths) -> dict:
     master_csv = paths.output_dataset / "relics_master.csv"
     if not master_csv.exists():
         return {"step": "step02_build_dataset", "groups": []}
-    # 从 md 目录统计输入文件总数,从 csv 读出已生成的记录
     md_by_stem: dict[str, Path] = {}
     if paths.output_markdown.exists():
         for md in paths.output_markdown.rglob("*.md"):
@@ -477,7 +470,6 @@ def _items_step02(paths) -> dict:
         for row in csv.DictReader(f):
             records.append(row)
 
-    # 按乡镇分组
     groups_map: dict[str, list[dict]] = {}
     for r in records:
         twp = r.get("township") or "未分类"
@@ -516,7 +508,7 @@ def _items_docx_based(paths, index_name: str) -> dict:
         for docx in sorted(twd.glob("*.docx")):
             if docx.name.startswith("~$"):
                 continue
-            # 档案编号一般是 docx 文件名开头的 XXXXXX-XXXX
+            # 档案编号形如 XXXXXX-XXXX。
             m = re.match(r"([\d]{6}-[\d\-A-Za-z]+)", docx.stem)
             code = m.group(1) if m else docx.stem
             done = code in covered
@@ -590,8 +582,8 @@ def _items_step06(paths) -> dict:
 
 # ── 任务执行 ────────────────────────────────────────────────
 def _run_script_sync(script_path: str, task_id: str, extra_env: Optional[dict] = None) -> None:
-    """阻塞执行脚本并把最后 300 行输出挂到 _tasks[task_id]['log'],
-    供前端 polling /admin/task/<id> 实时看进度。由线程池调用。"""
+    """阻塞执行脚本,最后 300 行输出挂到 _tasks[task_id]['log'],
+    供 /admin/task/<id> 轮询使用。由线程池调用。"""
     import subprocess
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
@@ -625,8 +617,7 @@ def _run_script_sync(script_path: str, task_id: str, extra_env: Optional[dict] =
 
 @router.post("/run/{script_name}")
 async def run_script(script_name: str):
-    """触发指定脚本异步后台执行。支持短别名(process_docs 等)与完整名(step01_convert_docs)。
-    同名脚本已在跑时返回 409。"""
+    """后台异步执行脚本。支持短别名与 stepNN 完整名;同脚本并发时返回 409。"""
     real = _resolve_script(script_name)
     for tid, t in _tasks.items():
         if t["script"] == real and t["status"] == "running":
@@ -657,7 +648,7 @@ async def get_task(task_id: str):
 
 @router.get("/tasks")
 async def list_tasks(limit: int = 30):
-    """最近的任务历史(默认 30 条,含日志摘要供任务历史表使用)。"""
+    """最近的任务历史(默认 30 条,含日志末行摘要)。"""
     items = []
     for tid, t in _tasks.items():
         items.append({
@@ -703,8 +694,7 @@ async def process_single(
     file: UploadFile = File(...),
     township: str = Form(...),
 ):
-    """上传 docx 并立即触发 step01。step01 自身会跳过已存在的有效 md,
-    所以对已处理的档案再次触发是安全的。"""
+    """上传 docx 并立即触发 step01。step01 会跳过已有的有效 md,重复触发安全。"""
     if not file.filename or not file.filename.endswith(".docx"):
         raise HTTPException(400, "仅支持 .docx 文件")
 
@@ -736,9 +726,8 @@ async def process_single(
     }
 
 
-# ── 文物 CRUD（走 DB + 乐观锁 + 审计）──────────────────────
-# 这些接口只在 DB 模式可用。前端（或脚本）传入 expected_version 做并发保护，
-# 冲突返回 409，调用方需重新拉一遍最新记录再提交。
+# ── 文物 CRUD (DB + 乐观锁 + 审计) ────────────────────────
+# 仅 DB 模式可用。调用方需传 expected_version,冲突返回 409。
 
 def _require_db() -> None:
     if not getattr(store, "_use_db", False):
@@ -746,8 +735,8 @@ def _require_db() -> None:
 
 
 def _normalize_relic_payload(raw: dict) -> dict:
-    """把可能带中文的提交体（category_main/heritage_level 等）标准化到 DB 字段。
-    已经传编码的（category=0300）就原样保留。"""
+    """把中文字段(category_main / heritage_level / survey_type 等)标准化到 DB 编码;
+    已经是编码的直接保留。"""
     p = dict(raw or {})
     if "category_main" in p and "category" not in p:
         p["category"] = normalize_category(p.pop("category_main"))
@@ -760,14 +749,13 @@ def _normalize_relic_payload(raw: dict) -> dict:
     if "survey_type" in p and "search_type" not in p:
         p["search_type"] = normalize_search_type(p.pop("survey_type"))
 
-    # 允许 center_lng / center_lat 命名（和 legacy JSON 一致）
+    # legacy 字段兼容:center_lng/lat/alt、archive_code。
     if "center_lng" in p and "lng" not in p:
         p["lng"] = p.pop("center_lng")
     if "center_lat" in p and "lat" not in p:
         p["lat"] = p.pop("center_lat")
     if "center_alt" in p and "alt" not in p:
         p["alt"] = p.pop("center_alt")
-    # archive_code 兼容
     if "archive_code" in p and "code" not in p:
         p["code"] = p.pop("archive_code")
     return p
@@ -778,7 +766,7 @@ async def create_relic(
     payload: dict = Body(...),
     x_actor: Optional[str] = Header(None, alias="X-Actor"),
 ):
-    """创建一条文物。payload 至少包含 code、name、lng、lat。"""
+    """创建文物。payload 至少包含 code / name / lng / lat。"""
     _require_db()
     try:
         after = store.create_relic(_normalize_relic_payload(payload), actor=x_actor or "")
@@ -795,8 +783,7 @@ async def update_relic(
     payload: dict = Body(...),
     x_actor: Optional[str] = Header(None, alias="X-Actor"),
 ):
-    """更新文物。payload 必须带 expected_version 做乐观锁。
-    version 不匹配返回 409，调用方应刷新后重试。"""
+    """更新文物。payload 必传 expected_version;冲突返回 409。"""
     _require_db()
     ev = payload.pop("expected_version", None)
     if ev is None:
@@ -821,7 +808,7 @@ async def delete_relic(
     code: str,
     x_actor: Optional[str] = Header(None, alias="X-Actor"),
 ):
-    """软删除（status=-1），可以通过 /relics/{code} 更新 status=1 恢复。"""
+    """软删除(status=-1)。可通过 PUT /relics/{code} 把 status 改回 1 恢复。"""
     _require_db()
     try:
         store.delete_relic(code, actor=x_actor or "")
@@ -840,7 +827,7 @@ async def list_audit(
     start_ts: Optional[int] = None,
     end_ts: Optional[int] = None,
 ):
-    """读审计日志（最近的在前），支持多条件筛选。"""
+    """审计日志列表,支持多条件筛选,最近在前。"""
     _require_db()
     actions = [a.strip() for a in (action or "").split(",") if a.strip()] or None
     return {
@@ -859,7 +846,7 @@ async def rollback_audit(
     audit_id: int,
     x_actor: Optional[str] = Header(None, alias="X-Actor"),
 ):
-    """按某条审计记录回滚对应文物到 before_json 状态。"""
+    """按审计记录回滚文物到 before_json 状态。"""
     _require_db()
     try:
         return store.rollback_audit(audit_id, actor=x_actor or "")
@@ -874,15 +861,14 @@ async def rollback_audit(
 
 @router.get("/stats-overview")
 async def stats_overview():
-    """后台 Dashboard 聚合指标。一次 SQL 出所有卡片和图表数据。
-    DB 未启用时走 legacy 内存聚合，仅返回最基础字段。"""
+    """Dashboard 聚合指标,一次请求出齐所有卡片/图表数据;
+    DB 未启用时走 legacy 内存聚合,仅返回基础字段。"""
     return store.admin_stats_overview()
 
 
 @router.get("/codes")
 async def codes_dict():
-    """字典：category / rank / search_type → 中文标签。
-    前端列表页、编辑页、筛选器共用，避免两边写死。"""
+    """国标编码字典:category / rank / search_type → 中文标签。"""
     return {
         "categories": [{"code": c, "label": CATEGORY_CODES[c]} for c in CATEGORY_CODES],
         "ranks": [{"code": c, "label": RANK_CODES[c]} for c in RANK_CODES],
@@ -892,13 +878,13 @@ async def codes_dict():
 
 @router.get("/relics-townships")
 async def relics_townships():
-    """DB 里已入库文物用到的乡镇下拉。"""
+    """后台乡镇下拉,来源为 DB 中已入库文物。"""
     _require_db()
     return {"townships": store.admin_list_townships()}
 
 
 def _parse_bbox(bbox: Optional[str]) -> Optional[tuple]:
-    """'minLng,minLat,maxLng,maxLat' → (mnl, mnt, mxl, mxt)；格式非法返回 None。"""
+    """解析 'minLng,minLat,maxLng,maxLat';格式非法返回 None。"""
     if not bbox:
         return None
     parts = [p.strip() for p in bbox.split(",") if p.strip()]
@@ -924,7 +910,7 @@ async def list_relics(
     bbox: Optional[str] = Query(None, description="minLng,minLat,maxLng,maxLat"),
     order_by: str = "updated_at_desc",
 ):
-    """后台分页列表。`category` / `rank` 支持逗号分隔多选。"""
+    """后台分页列表。category / rank 支持逗号多选。"""
     _require_db()
     categories = [c for c in (category or "").split(",") if c] or None
     ranks = [c for c in (rank or "").split(",") if c] or None
@@ -945,7 +931,7 @@ async def relic_neighbors(
     radius: float = Query(2000.0, ge=50, le=50000, description="米"),
     limit: int = Query(20, ge=1, le=100),
 ):
-    """返回 `code` 附近 `radius` 米内的其它文物（按距离升序）。"""
+    """radius 米内的其它文物,按距离升序。"""
     _require_db()
     return {
         "code": code, "radius": radius,
@@ -955,7 +941,7 @@ async def relic_neighbors(
 
 @router.get("/relics/{code}")
 async def get_relic_full(code: str):
-    """取一条文物的全字段（给编辑页初始化用），包含 _version 供乐观锁。"""
+    """文物全字段,含 _version 供乐观锁。"""
     _require_db()
     r = store.get_relic_full(code) if hasattr(store, "get_relic_full") else store.get_relic(code)
     if not r:
@@ -968,10 +954,10 @@ async def bulk_update_relics(
     payload: dict = Body(...),
     x_actor: Optional[str] = Header(None, alias="X-Actor"),
 ):
-    """批量同字段更新。payload: `{codes: [..], fields: {...}}`。
+    """批量同字段更新。payload = {codes, fields}。
 
-    - `fields` 只保留可写字段；不接受 `expected_version`（每条各自拿当前 version）。
-    - 乐观锁冲突 / 不存在 / 失败，各自记录在返回里，不影响其他条目。
+    - fields 仅保留可写字段;不接受 expected_version(逐条取当前 version)。
+    - 乐观锁冲突 / 不存在 / 异常逐条记录,不中断其它条目。
     """
     _require_db()
     codes = payload.get("codes") or []
@@ -981,7 +967,7 @@ async def bulk_update_relics(
     if not isinstance(fields, dict) or not fields:
         raise HTTPException(400, "fields 不能为空")
     patch = _normalize_relic_payload(fields)
-    # code 本身不允许改；status 单独走 bulk-status 语义更清晰，这里一并允许
+    # code 不允许批量改写。
     patch.pop("code", None)
     try:
         return store.admin_bulk_update(codes, patch, actor=x_actor or "")
@@ -994,10 +980,8 @@ async def bulk_set_status(
     payload: dict = Body(...),
     x_actor: Optional[str] = Header(None, alias="X-Actor"),
 ):
-    """批量改状态：`{codes:[...], status: 1|0|-1}`。
-
-    status=-1 走软删除接口（写 audit action=delete），1 / 0 走 bulk_update（action=update）。
-    """
+    """批量改状态。payload = {codes, status}。status=-1 走软删(action=delete),
+    0/1 走 bulk_update(action=update)。"""
     _require_db()
     codes = payload.get("codes") or []
     status = payload.get("status")
@@ -1022,12 +1006,7 @@ async def export_relics(
     bbox: Optional[str] = Query(None, description="minLng,minLat,maxLng,maxLat"),
     order_by: str = "code_asc",
 ):
-    """按当前筛选条件或显式 code 列表导出 CSV（UTF-8 BOM，Excel 直接可打开）。
-
-    返回列：code,name,category,category_label,rank,rank_label,search_type,search_type_label,
-          era,era_stats,lng,lat,alt,township,village,address,has_3d,has_pdf,has_photo,
-          has_boundary,photo_count,drawing_count,status,version,updated_at,brief
-    """
+    """按筛选或显式 codes 列表导出 CSV(UTF-8 BOM,Excel 可直接打开)。"""
     _require_db()
     cat_list = [c for c in (category or "").split(",") if c] or None
     rank_list = [c for c in (rank or "").split(",") if c] or None
@@ -1051,8 +1030,7 @@ async def export_relics(
         import io
         buf = io.StringIO()
         writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
-        # Excel 友好的 UTF-8 BOM
-        yield "\ufeff"
+        yield "\ufeff"  # UTF-8 BOM,Excel 识别中文
         writer.writeheader()
         yield buf.getvalue()
         buf.seek(0); buf.truncate(0)
@@ -1071,7 +1049,6 @@ async def export_relics(
             row["category_label"] = CATEGORY_CODES.get(str(row.get("category") or ""), "")
             row["rank_label"] = RANK_CODES.get(str(row.get("rank") or ""), "")
             row["search_type_label"] = SEARCH_TYPE_CODES.get(str(row.get("search_type") or ""), "")
-            # bool 导出成 0/1，excel 友好
             for k in ("has_3d", "has_pdf", "has_photo", "has_boundary"):
                 row[k] = 1 if row.get(k) else 0
             writer.writerow(row)
@@ -1096,11 +1073,12 @@ async def import_relics(
     mode: str = Form("upsert"),          # upsert / create_only
     x_actor: Optional[str] = Header(None, alias="X-Actor"),
 ):
-    """批量导入文物：接受 CSV / JSON 数组，按 code 匹配：
-    - mode=upsert：已有的走 update_relic（带版本号从 DB 读），新增的走 create_relic
-    - mode=create_only：已有则跳过，仅新增
+    """批量导入。接受 CSV / JSON 数组,按 code 匹配。
 
-    返回每行的处理结果，方便前端展示。大文件时建议分批，本接口没有事务整体包装。
+    - upsert:已存在走 update(从 DB 读最新 version),否则 create
+    - create_only:已存在则跳过,仅新增
+
+    返回逐行结果。无整体事务;大文件请分批导入。
     """
     _require_db()
     raw = await file.read()
@@ -1140,7 +1118,7 @@ async def import_relics(
                     continue
                 ev = existing.get("_version")
                 if ev is None:
-                    # legacy dict 里没 version，直接查 DB 拿最新
+                    # legacy 字典不含 version,直接读 DB 取最新值。
                     row = store._thread_conn().execute(
                         "SELECT version FROM relics WHERE code = ?", (code,)
                     ).fetchone()

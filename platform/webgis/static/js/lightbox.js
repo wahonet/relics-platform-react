@@ -1,4 +1,4 @@
-// 照片/图纸灯箱：左右键切换，ESC 关闭。
+// 照片 / 图纸灯箱:左右方向键切换,ESC 关闭。
 function openPhotoLB(idx) {
     lbItems = currentPhotos.map(p => ({
         src: '/photos/' + p.relative_path,

@@ -1,11 +1,11 @@
-// 主视角(Home View)管理:
-// - 记录一个可持久化的"默认视角",点击顶部"重置"按钮或指南针时飞回它
-// - 允许用户在设置面板里用"市 → 县"级联下拉选一个山东省的县作为主视角
-//   (数据源:/static/data/shandong_admin.json,和下载模块共用)
-// - 用户也可以把"当前视角"固化为主视角
+// 主视角 (Home View) 管理。
 //
-// 持久化:localStorage['relics.homeView'] = { city, county, lng, lat, h, label }
-// 如果没有,就回退到 config.js 里那个 CENTER 常量(后端 config.yaml 里的 geo.center)。
+// - 记录一个可持久化的默认视角,重置按钮 / 初始飞行都回到这里
+// - 设置面板内置"地级市 → 区县"级联下拉(数据源 /static/data/shandong_admin.json)
+// - 也支持把当前视角一键固化为主视角
+//
+// 持久化: localStorage['relics.homeView'] = { city, county, lng, lat, h, label }
+// 缺省: 回退到 config.js 的 CENTER (即后端 config.yaml 的 geo.center)。
 (function () {
     const LS_KEY = 'relics.homeView';
     let _shandong = null;
@@ -14,8 +14,7 @@
     function _ensureShandong() {
         if (_shandong) return Promise.resolve(_shandong);
         if (_loadingPromise) return _loadingPromise;
-        // 带时间戳的 cache-buster:避免浏览器把老的 404 / 旧版本 JSON 缓存住,
-        // 过去的一个坑是部署这份数据前用户访问过,导致 disk cache 永远返回 404。
+        // 时间戳 cache-buster:防止浏览器把旧版本或 404 结果缓存住。
         const url = '/static/data/shandong_admin.json?t=' + Date.now();
         _loadingPromise = fetch(url, { cache: 'no-store' })
             .then(function (r) {
@@ -29,7 +28,7 @@
                 return j;
             })
             .catch(function (err) {
-                // 让下一次调用可以重试,避免一次瞬时失败就永远卡死
+                // 允许下次重试,避免一次瞬时失败就永久卡死。
                 _loadingPromise = null;
                 console.error('[home_view] 加载 shandong_admin.json 失败:', err);
                 throw err;
@@ -77,9 +76,9 @@
         _refreshHomeIndicator();
     }
 
-    // 根据 bbox 大小反算一个合适的俯视高度:
-    //   视口水平宽度 ≈ h · 2 · tan(fov/2),Cesium 默认 fov=60°,
-    //   所以 h ≈ bbox 对角线长度 · 0.9 左右就能基本贴边地看全它。
+    // 按 bbox 对角线长度推算俯视高度。
+    // Cesium 默认 fov=60°,视口水平宽度 ≈ h · 2 · tan(fov/2),
+    // 取 ~0.95 · 对角线可恰好贴边;范围钳在 15 km ~ 300 km 之间。
     function _altitudeFromBbox(bbox) {
         const w = bbox[0], s = bbox[1], e = bbox[2], n = bbox[3];
         const midLat = (n + s) / 2;
@@ -87,7 +86,6 @@
         const dLat = Math.abs(n - s);
         const diagDeg = Math.sqrt(Math.pow(dLng * Math.cos(midLat * Math.PI / 180), 2) + dLat * dLat);
         const diagM = diagDeg * 111000;
-        // 钳一下区间,小到县城不会贴地,大到全市也不会拉到看全球。
         return Math.max(15000, Math.min(300000, diagM * 0.95));
     }
 
@@ -135,8 +133,7 @@
         const citySel = document.getElementById('hvCityPick');
         if (!citySel) return;
         _refreshHomeIndicator();
-        // 之前每次打开设置面板都触发一次 fetch,偶发地被浏览器 throttling 掉。
-        // 改为:已填充 → 只刷新指示器;没填充 → 重新拉一次,不管之前有没有失败。
+        // 已填充过则跳过;否则重新拉取(不受上次失败影响)。
         if (citySel.dataset.filled === '1') {
             return;
         }
@@ -144,7 +141,7 @@
             const data = await _ensureShandong();
             _populateCityDropdown(citySel, data);
 
-            // 回填当前选择
+            // 回填上次选择。
             const hv = getHomeView();
             if (hv.city && data.cities[hv.city]) {
                 citySel.value = hv.city;
@@ -157,20 +154,18 @@
                 }
             }
         } catch (e) {
-            // toast 在一些时序下可能还没就绪,再 fallback 一层,保证用户能看见
+            // toast 未就绪时 fallback 到 alert,保证用户可见。
             const msg = '加载山东省区县数据失败:' + (e && e.message ? e.message : e);
             if (typeof toast === 'function') {
                 toast(msg, true);
             } else {
                 alert(msg);
             }
-            // 把 select 的 placeholder 换成明确的错误提示,不留空白歧义
             citySel.innerHTML = '<option value="">(加载失败,请刷新页面)</option>';
         }
     }
 
-    // 页面启动时就预热一次,让下拉列表在用户第一次打开设置面板前就已经有内容。
-    // 这样即便 toggleSettings 里的 try/catch 吃掉了错误,用户仍能看到选项。
+    // 页面就绪后预热一次,首次打开设置面板即可直接看到下拉项。
     function _preloadOnReady() {
         const run = function () {
             _ensureShandong().then(function (data) {
@@ -189,7 +184,7 @@
     }
     _preloadOnReady();
 
-    // 把当前两级下拉的选择转成一个可落地的 home view,拿不到就返回 null。
+    // 当前两级下拉 → 可落地的 home view;无有效选择返回 null。
     function _pickToView() {
         if (!_shandong) return null;
         const citySel = document.getElementById('hvCityPick');
@@ -217,10 +212,8 @@
         };
     }
 
-    // 下拉变更 → 立刻落盘到 localStorage:
-    // 以前要求用户必须再点一下"应用并飞过去"才算数,容易忘,
-    // 结果"点重置"时还是飞回老位置,让人误以为功能没生效。
-    // 现在改成"选了就保存",按钮只负责"顺便飞过去"。
+    // 下拉变更即落盘,避免用户漏点"应用"导致重置仍回旧位置。
+    // 按钮只负责"顺便飞过去",保存由本函数自动完成。
     function _autoSaveFromPick() {
         const v = _pickToView();
         if (!v) return;
@@ -282,7 +275,7 @@
         toast('已恢复为默认主视角');
     }
 
-    // 暴露给 HTML onclick / layout.js / map.js
+    // 暴露给 HTML onclick / layout.js / map.js。
     window.getHomeView = getHomeView;
     window.setHomeView = setHomeView;
     window.flyToHome = flyToHome;

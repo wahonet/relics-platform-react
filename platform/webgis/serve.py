@@ -1,7 +1,7 @@
-"""WebGIS 服务启动器。
+"""WebGIS 启动入口。
 
-start_platform.bat 调用本文件,从 config.yaml 读 host/port 启动 uvicorn,
-避免在 bat 里解析 YAML。
+由 `start_platform.bat` 调用:读取 config.yaml 拿 host/port,然后起 uvicorn,
+避免在 .bat 脚本里解析 YAML。
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from _common import load_config  # noqa: E402
 
 
 def _open_browser_delayed(url: str, delay: float = 2.0) -> None:
-    """等 uvicorn 起来再拉浏览器,避免访问 404。"""
+    """延迟打开浏览器,等 uvicorn 绑定端口成功后再访问。"""
     def _worker() -> None:
         time.sleep(delay)
         try:

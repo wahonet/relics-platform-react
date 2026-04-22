@@ -1,4 +1,4 @@
-// AI 知识库对话：与后端 /api/chat 流式对接，消息里的 [[label|action]] 链接触发地图联动。
+// AI 问答面板:与 /api/chat 流式对接,消息中的 [[label|action]] 触发地图联动。
 let chatHistory = [];
 let chatStreaming = false;
 
@@ -51,7 +51,7 @@ function toggleChat() {
     if (window.Bus) window.Bus.emit('chat:toggled', { open });
 }
 
-// 轻量 Markdown 渲染；额外处理 [[label|action]] 作为地图/日志联动链接。
+// 轻量 Markdown 渲染;额外把 [[label|action]] 渲染为地图 / 日志联动链接。
 function renderMd(text) {
     let h = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 

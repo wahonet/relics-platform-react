@@ -1,16 +1,15 @@
-// 离线瓦片下载模块：
-// - 弹出模态面板，结构化步骤：范围 → 类型 → 层级 → 预估/下载 / 缓存
-// - 两种范围选择：在地图上框选 | 按县域级联下拉（山东省）
-// - 框选：按住左键拖拽 → 实时绘制一个红色矩形 → 松开后得到 bbox
-// - 预估 / 开始下载 调用后端 /api/tiles/{area-estimate,download-area}
+// 离线瓦片下载模块。
+// 面板流程: 范围 → 类型 → 层级 → 预估 / 下载 / 缓存管理。
+// 范围来源: 地图上鼠标框选 或 山东省"市 → 县"级联。
+// 后端接口: /api/tiles/area-estimate 与 /api/tiles/download-area。
 (function () {
-    let _bbox = null;              // {west, south, east, north}
-    let _bboxLabel = null;         // 人类可读的来源标签，用于 bbox 预览条
+    let _bbox = null;              // { west, south, east, north }
+    let _bboxLabel = null;         // 人类可读来源标签
     let _pickHandler = null;
     let _rectEntity = null;
     let _mode = 'bbox';            // 'bbox' | 'county'
-    let _shandongData = null;      // 延迟加载
-    let _shandongLoading = null;   // 正在加载的 Promise
+    let _shandongData = null;
+    let _shandongLoading = null;
 
     // ── 工具 ──────────────────────────────────────────
     function _fmtMB(bytes) {
@@ -112,7 +111,7 @@
         }
         const cityData = _shandongData.cities[city];
         const frag = document.createDocumentFragment();
-        // 允许只选市
+        // 支持"只选市"的范围。
         const head = document.createElement('option');
         head.value = '__city__'; head.textContent = '整个 ' + city;
         frag.appendChild(head);
@@ -124,7 +123,7 @@
         countySel.appendChild(frag);
         countySel.disabled = false;
 
-        // 默认就以"整个市"作为范围，方便用户一步到位
+        // 默认选"整个市",省一次操作。
         countySel.value = '__city__';
         dlOnCountyChange();
     }
@@ -376,7 +375,7 @@
             west: _bbox.west, south: _bbox.south, east: _bbox.east, north: _bbox.north,
             providers: ps.join(','), zooms: zs.join(','),
         });
-        // 让后端记下这次下载的"目标标签"（市/县 或 手动），便于后台管理页展示
+        // 让后端记下本次下载来源(市/县 或 手动框选),便于后台审计展示。
         if (_bboxLabel) qs.set('label', _bboxLabel);
 
         try {
@@ -483,7 +482,7 @@
         }
     }
 
-    // 暴露到全局
+    // 暴露到全局。
     window.toggleDownloadPanel = toggleDownloadPanel;
     window.dlSetMode = dlSetMode;
     window.dlOnCityChange = dlOnCityChange;

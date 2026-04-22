@@ -1,12 +1,12 @@
-// 视口查询管理：监听 camera.moveEnd，debounce 后拉取 /api/relics/by-bbox，
-// 配合 LRU 缓存复用相邻视口的数据，最后喂给 PointRenderer 做 diff 更新。
+// 视口查询管理:监听 camera.moveEnd → debounce → /api/relics/by-bbox,
+// 结合 LRU 缓存复用相邻视口结果,最终喂给 PointRenderer 做 diff 更新。
 //
-// 依赖全局：window.Cesium, window.viewer, window.PointRenderer, window.Bus
-// 输出：window.Viewport（管理对象，提供 start/refresh/setFilters 等方法）
+// 依赖全局: Cesium / viewer / PointRenderer / Bus
+// 导出 window.ViewportManager。
 (function () {
-    const MAX_CACHE = 32;              // LRU 容量
-    const DEBOUNCE_MS = 300;           // camera 停下 300ms 后再拉
-    const COORD_DECIMALS = 5;          // URL 参数小数位，保证缓存命中率
+    const MAX_CACHE = 32;        // LRU 容量
+    const DEBOUNCE_MS = 300;     // camera 停下后等待
+    const COORD_DECIMALS = 5;    // URL 小数位数,保证缓存命中率
 
     function _debounce(fn, ms) {
         let t;
@@ -31,7 +31,6 @@
 
         start() {
             this.viewer.camera.moveEnd.addEventListener(this._onMoveEnd);
-            // 首次启动：直接拉一次
             this.refresh();
         }
 
@@ -39,10 +38,9 @@
             this.viewer.camera.moveEnd.removeEventListener(this._onMoveEnd);
         }
 
-        // 外部调用：筛选变了强制重刷
+        // 筛选条件变更,清缓存强制重刷。
         setFilters(filters) {
             this._filters = Object.assign({}, filters || {});
-            // 筛选变化时清缓存，避免旧条件的结果被复用
             this._cache.clear();
             this.refresh();
         }
@@ -53,7 +51,7 @@
 
         clearFilters() { this.setFilters({}); }
 
-        // 计算当前视口 bbox（WGS84 度）
+        // 当前视口 bbox (WGS-84 十进制度)。
         _currentBBox() {
             const rect = this.viewer.camera.computeViewRectangle();
             if (!rect) return null;
@@ -70,7 +68,7 @@
             };
         }
 
-        // 把筛选对象拍平成 URL 参数
+        // 把筛选对象拍平成 URL 查询参数。
         _filtersToParams() {
             const p = {};
             const f = this._filters || {};
@@ -88,7 +86,7 @@
             const qs = new URLSearchParams(params).toString();
             const url = '/api/relics/by-bbox?' + qs;
 
-            // 跟上次同一个 URL 就不重复拉（常见于 moveEnd 触发但视口未变）
+            // 同 URL 的重复请求直接用缓存(moveEnd 可能在视口未变时也触发)。
             if (url === this._lastURL && this._cache.has(url)) {
                 this.renderer.diffUpdate(this._cache.get(url));
                 return;
@@ -98,7 +96,7 @@
             let data = this._cache.get(url);
             if (data) {
                 this.renderer.diffUpdate(data);
-                // 把命中项移到 LRU 末尾
+                // LRU:命中项移到末尾。
                 this._cache.delete(url);
                 this._cache.set(url, data);
                 return;
@@ -111,11 +109,10 @@
                 data = (body && body.data) || [];
                 this._cache.set(url, data);
                 if (this._cache.size > MAX_CACHE) {
-                    // 淘汰最早的一条
                     const first = this._cache.keys().next().value;
                     if (first !== undefined) this._cache.delete(first);
                 }
-                // 只有最新请求的才喂到渲染器，防止并发请求乱序
+                // 仅当最新请求完成时才喂渲染器,避免并发乱序。
                 if (this._lastURL === url) {
                     this.renderer.diffUpdate(data);
                     window.Bus && window.Bus.emit('viewport:updated', { total: data.length, truncated: body.truncated });

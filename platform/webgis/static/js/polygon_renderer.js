@@ -1,17 +1,13 @@
-// PolygonRenderer —— 按颜色合批的面图层渲染。
+// PolygonRenderer —— 按颜色聚合的面图层。
 //
-// 原实现：每个 feature 一个 viewer.entities.add(polygon)，1000 个面就是
-// 1000 个 Entity + 1000 次 materialChanged，场景 commit 成本很高。
+// 早期实现每个 feature 一个 Entity.polygon,1000 个面即 1000 次 materialChanged,
+// 场景 commit 代价高。此处按颜色聚合成若干 GroundPrimitive(填充) +
+// GroundPolylinePrimitive(描边),绘制调用从 O(n) 降到 O(颜色数)。
 //
-// 现在按"颜色"聚合，每个颜色一个 Cesium.GroundPrimitive（填充）+
-// Cesium.GroundPolylinePrimitive（描边），绘制调用数从 O(n) 降到 O(颜色数)。
-//
-// 依赖全局：window.Cesium
-// 输出：window.PolygonRenderer（类）
+// 依赖全局 Cesium,导出 window.PolygonRenderer。
 (function () {
-    // 连续重复点 & GeoJSON ring 的尾部闭合点会让 GroundPolylineGeometry
-    // 构造出零长度线段，进而在 worker 里 normalize 除零报 "normalized result is not a number"。
-    // 这里提前清洗：严格地剔除连续重复点，再返回 [lng,lat,lng,lat,...] 数组。
+    // GroundPolylineGeometry 对零长度线段敏感(normalize 除零),
+    // 须提前清洗连续重复点 & GeoJSON ring 的尾部闭合点。
     const EPS = 1e-9;
     function _sanitize(coords) {
         const pts = [];
@@ -23,7 +19,7 @@
             if (last && Math.abs(last[0] - x) < EPS && Math.abs(last[1] - y) < EPS) continue;
             pts.push([x, y]);
         }
-        // 若最后一点和第一点重合（GeoJSON ring 约定），去掉尾部
+        // GeoJSON ring 约定末点与首点重合,去掉尾部。
         if (pts.length > 1) {
             const f = pts[0], l = pts[pts.length - 1];
             if (Math.abs(f[0] - l[0]) < EPS && Math.abs(f[1] - l[1]) < EPS) pts.pop();
@@ -45,12 +41,12 @@
             this._visible = true;
         }
 
-        // features: GeoJSON feature 数组；colorFn(archive_code) → '#rrggbb'
+        // features: GeoJSON Feature 数组;colorFn(archive_code) → '#rrggbb'。
         render(features, colorFn) {
             this.clear();
             if (!features || !features.length) return;
 
-            // 按 color 聚合 polygon 几何（清洗后保存成 [[lng,lat],...]）
+            // 按颜色聚合 polygon 几何(清洗后为 [[lng,lat], ...] 列表)。
             const groups = new Map();
             for (const f of features) {
                 if (!f.geometry || f.geometry.type !== 'Polygon') continue;

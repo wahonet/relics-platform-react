@@ -1,4 +1,4 @@
-// 行政边界图层：县/乡镇/村三级 + 标注，折线做过道格拉斯-普克简化 + 均值平滑。
+// 行政边界图层:县 / 乡镇 / 村三级 + 标注,折线经道格拉斯-普克简化与均值平滑。
 const bndLayers = { county: [], township: [], townLabel: [], village: [], villageLabel: [] };
 let villageGeoJSON = null;
 let townshipNames = [];
@@ -232,8 +232,7 @@ function toggleBoundaryMenu() {
     }
 }
 
-// 底图/影像菜单:以前是顶栏里一个 <select> + 外挂"透明"滑块,
-// 现在统一收进一个下拉菜单,让"影像"这一组不再横向挤占空间。
+// 底图/影像菜单:早期顶栏使用 <select> + 外挂滑块,现统一收进下拉菜单。
 function toggleBaseLayerMenu() {
     var menu = document.getElementById('baseLayerMenu');
     var btn = document.getElementById('btnBaseLayer');

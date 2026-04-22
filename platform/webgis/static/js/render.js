@@ -1,4 +1,4 @@
-// 地图渲染：点位符号、颜色映射、面图层。符号/图例图标通过 Canvas 动态生成并缓存。
+// 点位符号、颜色映射、面图层渲染。符号 / 图例图标由 Canvas 动态生成并缓存。
 function buildColorMap(relics, dim) {
     const counts = {};
     relics.forEach(r => { dimValues(r, dim).forEach(v => { counts[v] = (counts[v]||0)+1; }); });
@@ -32,9 +32,8 @@ let _showTextLabels = true;
 let _labelFontSize = 14;
 let _labelFontFamily = '"Microsoft YaHei", sans-serif';
 
-// 图标是异步 decode 的；首次 updateLegend() 很可能在图标还没 onload 时就跑完了，
-// 于是 '古遗址' 之类的条目退化为"纯色圆点"。这里 onload 时清一次符号缓存，
-// 并在下一帧把图例重画一次，保证所有类别都拿到真正的 PNG 覆盖。
+// 图标异步 decode,首次 updateLegend() 很可能早于图标 onload,导致条目退化
+// 为纯色圆点。每次 onload 都清一次符号缓存并重绘图例,确保 PNG 覆盖生效。
 (function preloadCategoryIcons() {
     let pending = Object.keys(CATEGORY_ICONS).length;
     function _rerenderOnReady() {
@@ -48,11 +47,11 @@ let _labelFontFamily = '"Microsoft YaHei", sans-serif';
     }
     for (const [cat, url] of Object.entries(CATEGORY_ICONS)) {
         const img = new Image();
-        // 同源 /static 不需要 CORS 头；加了反而会让某些静态服务返回的图片被当作 taint 丢弃。
+        // 同源 /static 不设 CORS,避免部分静态服务把图片当作 taint 丢弃。
         img.onload = () => {
             _catImgs[cat] = img;
             pending--;
-            // 每个图标 onload 都刷一次，避免最后一个失败卡住全局
+            // 每次 onload 都刷一次,避免最后一个图标失败导致整体卡住。
             _rerenderOnReady();
         };
         img.onerror = () => {
@@ -143,7 +142,7 @@ function makeLegendIcon(category, color) {
 
 let _relicPointsHidden = false;
 
-// 这些开关同时作用于新渲染器（window.pointRenderer）和旧 entityMap（迁移期兼容）。
+// 下列开关同时作用于新渲染器(pointRenderer)与旧 entityMap(兼容期保留)。
 function toggleHideRelicPoints() {
     _relicPointsHidden = document.getElementById('hideRelicToggle').checked;
     const show = !_relicPointsHidden;
@@ -212,13 +211,10 @@ function _makePointCanvas(color, outlineColor, outlineW, sz) {
     return url;
 }
 
-// 旧的每点一个 Entity 渲染器已废弃。保留空实现作为 fallback，
-// 真正的点绘制走 window.pointRenderer（PointPrimitiveCollection）。
-// 为兼容老 filter 在 entity.show 上直接赋值的路径，这里留下空的 entityMap。
+// 旧的"每点一 Entity"渲染已废弃。兼容 fallback:当 viewport 尚未启动时,
+// 把筛选后的 relics 适配为 8 字段格式喂入 pointRenderer。
 function renderPoints(relics) {
     if (!window.pointRenderer) return;
-    // 把筛选后的文物映射成视口查询级字段喂给新渲染器
-    // （当 app.js 采用视口查询路径时，本函数不会被调用）
     const list = (relics || []).map(r => ({
         id: r.archive_code,
         code: r.archive_code,
@@ -245,7 +241,7 @@ async function loadPolygons() {
         if (window.polygonRenderer) {
             window.polygonRenderer.render(geojson.features || [], colorFn);
         } else {
-            // fallback：PolygonRenderer 加载失败时退回旧的 Entity 实现
+            // PolygonRenderer 缺失时回退到旧的 Entity 实现。
             (geojson.features || []).forEach(f => {
                 const coords = f.geometry.coordinates[0];
                 const cc = Cesium.Color.fromCssColorString(colorFn(f.properties.archive_code));

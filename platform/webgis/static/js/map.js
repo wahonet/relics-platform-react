@@ -1,5 +1,5 @@
 // Cesium 地图初始化、底图管理、指北针与比例尺。
-// Ion Token 由后端 /api/platform/config 注入；未配置时自动回退到本地 DEM。
+// Cesium Ion Token 由后端注入到 window.__PLATFORM_CONFIG;未配置时自动回退本地 DEM。
 if (window.__PLATFORM_CONFIG && window.__PLATFORM_CONFIG.cesium_ion_token) {
     Cesium.Ion.defaultAccessToken = window.__PLATFORM_CONFIG.cesium_ion_token;
 }
@@ -17,12 +17,12 @@ viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#0d1117');
 viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#0d1117');
 viewer.scene.postProcessStages.fxaa.enabled = true;
 
-// Phase B1 止血：requestRenderMode 让空闲时不重绘（CPU 从 20-30% 降到 <5%）；
-// maximumRenderTimeChange=0.5 保留对光照/地形等时间相关变化的响应。
+// requestRenderMode:空闲时不重绘(CPU 占用从 20-30% 降到 <5%);
+// maximumRenderTimeChange=0.5 保留对光照 / 地形等时间相关变化的响应。
 viewer.scene.requestRenderMode = true;
 viewer.scene.maximumRenderTimeChange = 0.5;
 
-// 高 DPR 设备（手机）下 resolutionScale 降档，避免 4K 渲染压垮 GPU。
+// 高 DPR 设备降档,避免 4K 渲染压垮移动端 GPU。
 function applyHDRendering() {
     var dpr = window.devicePixelRatio || 1;
     if (_hdMode) {
@@ -36,9 +36,9 @@ function applyHDRendering() {
 }
 applyHDRendering();
 
-// 相机距离约束：近处防穿模，远处收敛到"覆盖山东全省"量级。
-// (以前按 config.geo.bounds 对角线算,只能看县域;用户现在可以改主视角到
-//  任一山东市/县,所以统一把上限设为 500km,够看到整个山东省,也不至于拉到看全球。)
+// 相机距离约束:近处防穿模,远处收敛到"覆盖山东全省"量级。
+// (早期按 config.geo.bounds 对角线计算只够看县域;主视角可切换到任一市/县,
+//  故统一把上限设为 500 km,兼顾全省视角与局部操作。)
 (function _applyCameraConstraints() {
     var scc = viewer.scene.screenSpaceCameraController;
     scc.minimumZoomDistance = 10;
@@ -51,13 +51,13 @@ viewer.scene.skyAtmosphere.show = false;
 viewer.scene.verticalExaggeration = 1.0;
 viewer.scene.verticalExaggerationRelativeHeight = 0.0;
 
-// 地形默认关闭，勾选后优先拉 Ion，失败再走 /api/terrain 本地 DEM。
+// 地形默认关闭;勾选后优先用 Ion,失败回退 /api/terrain 本地 DEM。
 const _flatTerrain = new Cesium.EllipsoidTerrainProvider();
 let _terrainEnabled = false;
 let _terrainProvider = null;
 
-// 视角模式：'2d' = 正射俯视（pitch=-90，锁定倾斜）；'3d' = 斜视。
-// 默认 2D 看起来更像普通 GIS 地图，勾选地形时会自动进入 3D。
+// 视角模式:'2d' = 正射俯视(pitch=-90,锁定倾斜);'3d' = 斜视。
+// 默认 2D 更贴近普通 GIS 地图,勾选地形时自动切到 3D。
 let _viewMode = '2d';
 
 function _applyViewModeConstraint() {
@@ -93,7 +93,7 @@ function toggleTerrain() {
     var cb = document.getElementById('terrainToggle');
     _terrainEnabled = cb.checked;
     if (_terrainEnabled) {
-        // 勾选地形时自动进入 3D 斜视视角。
+        // 勾选地形 → 自动切到 3D 斜视。
         _viewMode = '3d';
         _applyViewModeConstraint();
         viewer.scene.verticalExaggeration = 5.0;
@@ -143,7 +143,7 @@ function toggleTerrain() {
         viewer.terrainProvider = _flatTerrain;
         viewer.scene.verticalExaggeration = 1.0;
         viewer.scene.maximumRenderTimeChange = Infinity;
-        // 取消地形时回到 2D 正射俯视视角。
+        // 关闭地形 → 回到 2D 正射俯视。
         _viewMode = '2d';
         _applyViewModeConstraint();
         var pos0 = viewer.camera.positionCartographic;
@@ -161,8 +161,7 @@ function toggleTerrain() {
     console.log('[DEM] terrain ' + (_terrainEnabled ? 'ON (×5)' : 'OFF'));
 }
 
-// 启动时如果用户已经把某个县固化为"主视角"(home_view.js/localStorage),
-// 就直接落在那里;否则用 config 默认 CENTER。
+// 启动时若 localStorage 有固化的主视角则优先使用,否则落在 config 默认 CENTER。
 (function _initialFly() {
     let dest = { lng: CENTER.lng, lat: CENTER.lat, h: CENTER.h };
     try {
@@ -183,19 +182,18 @@ function toggleTerrain() {
 
 let currentBaseType = 'arcgis_sat';
 
-// 离线的两项不许回源,上游 tile_proxy 见到 ?offline=1 会直接返回 1x1 透明 PNG,
-// 满足"默认离线地图应该是完全空白"的需求 —— 只有通过下载模块入库的瓦片才会被显示。
-// 在线项(gaode_*)仍然走 /tiles 代理,以便顺带写入离线缓存。
+// arcgis_sat / osm 作为"纯离线"底图:瓦片代理识别到 ?offline=1 会直接返回 1x1 透明 PNG,
+// 未下载到本地的区域保持空白。在线项(gaode_*)走 /tiles 代理,可顺带写入离线缓存。
 const OFFLINE_ONLY_BASES = new Set(['arcgis_sat', 'osm']);
 
-// 多源叠加：卫星影像单独要挂一层中文标注(gaode_anno),否则看上去没地名。
+// 卫星影像需要叠一层中文标注(gaode_anno),否则缺失地名。
 const ONLINE_BASE_LAYOUT = {
     gaode_sat: { base: 'gaode_sat', overlay: 'gaode_anno' },
     gaode_vec: { base: 'gaode_vec', overlay: null },
 };
 
 function _tileUrl(type, opts) {
-    // `?offline=1` 让后端跳过上游,`?t=<ts>` 用于下载完成后破坏旧的空白响应缓存。
+    // `?offline=1` 告诉后端跳过上游;`?t=<ts>` 下载完成后用于破坏旧空白响应缓存。
     const qs = [];
     if (OFFLINE_ONLY_BASES.has(type)) qs.push('offline=1');
     if (opts && opts.bust) qs.push('t=' + Date.now());
@@ -223,8 +221,7 @@ function switchBaseLayer(type) {
 
     try {
         const base = viewer.imageryLayers.add(
-            // bust=true 让重复点同一个底图(例如下载完成后刷新)时,
-            // 浏览器和 Cesium 不会把以前的"空白瓦片"拿出来糊弄我们。
+            // bust=true 避免切换同一底图时命中浏览器/Cesium 缓存里的旧空白瓦片。
             makeImageryLayer(_tileUrl(layout.base, { bust: true }))
         );
         base.alpha = alpha;
@@ -270,7 +267,7 @@ function resetNorthView() {
     });
 }
 
-// 自定义缩放：禁用 Cesium 默认滚轮缩放，改用指数插值保证近处/远处手感一致。
+// 自定义缩放:禁用默认滚轮,改用指数插值保证近处/远处手感一致。
 viewer.scene.screenSpaceCameraController.zoomEventTypes = [];
 viewer.scene.canvas.addEventListener('wheel', function(e) {
     e.preventDefault();

@@ -1,8 +1,7 @@
-"""工作日志 API:合并 step05 产出的每日 PDF 与总台账 Excel。
+"""工作日志 API。
 
-数据源:
-    data/output/worklog_pdfs/YYYY-MM-DD_*.pdf   每日日志 PDF
-    data/input/02_worklogs/*.xlsx               总台账(文件名含"台账"或"ledger")
+合并 step05 产出的每日 PDF (`data/output/worklog_pdfs/YYYY-MM-DD_*.pdf`)
+与总台账 Excel (`data/input/02_worklogs/*.xlsx`,文件名含"台账"或"ledger")。
 """
 from __future__ import annotations
 
@@ -42,7 +41,7 @@ def _parse_date(val) -> str:
 
 
 def _find_ledger_path() -> Path | None:
-    """data/input/02_worklogs/ 下文件名含"台账"或"ledger"的第一个 xlsx。"""
+    """02_worklogs/ 下文件名含"台账"或"ledger"的第一个 xlsx。"""
     worklog_dir = get_paths().input_worklogs
     if not worklog_dir.exists():
         return None
@@ -54,9 +53,8 @@ def _find_ledger_path() -> Path | None:
 
 
 def _load_ledger() -> None:
-    """读取台账 xlsx 并缓存,以后调用直接复用。
-    台账字段列约定: date/duration/人数/参与人/镇街/村/复核数/复核名/新发现数/
-    新发现名/消亡数/消亡名/备注,从第 3 行开始。"""
+    """读取并缓存台账。列顺序约定:日期 / 时长 / 人数 / 参与人 / 镇街 / 村 /
+    复核数 / 复核名 / 新发现数 / 新发现名 / 消亡数 / 消亡名 / 备注,从第 3 行起。"""
     global _ledger_cache, _ledger_by_date
     if _ledger_cache is not None:
         return
@@ -111,8 +109,7 @@ def _load_ledger() -> None:
 
 
 def _get_pdf_list() -> dict[str, str]:
-    """扫描 worklog_pdfs 目录,按文件名前缀提取日期:
-    返回 { 'YYYY-MM-DD': 'filename.pdf' }。"""
+    """扫描 worklog_pdfs 目录,按文件名前缀 YYYY-MM-DD 建立索引。"""
     pdf_dir = get_paths().output_worklogs
     result: dict[str, str] = {}
     if not pdf_dir.exists():

@@ -1,18 +1,18 @@
-"""国标 / 四普 编码字典。
+"""国标 / 四普编码字典。
 
-职责：在 step07 灌库、import_relics 导入、以及运行时 API 响应之间，
-提供中文字符串 ↔ 国标编码的统一映射。新数据应以"编码"为准，
-原有中文字符串通过 `normalize_*` 在边界处完成一次性映射。
+在 step07 灌库、CSV / JSON 导入和运行时 API 响应之间,提供中文 ↔ 编码
+的统一映射。新数据以"编码"为主,老的中文字段通过 `normalize_*` 在
+边界处一次性映射到编码。
 
-与前端 `platform/webgis/static/js/dict.js` 保持一致，
-若要调整映射关系，两处必须同步修改。
+本表必须与前端 `platform/webgis/static/js/dict.js` 同步;
+调整映射时请两处一并更新。
 """
 from __future__ import annotations
 
 from typing import Optional
 
-# ── 文物大类（GB/T 15420-1994 核心码，四普沿用） ──────────────
-# 最终落库字段 `relics.category` 只存 4 位编码字符串。
+# ── 文物大类 (GB/T 15420-1994 核心码,四普沿用) ─────────────
+# 落库字段 `relics.category` 仅存 4 位编码字符串。
 CATEGORY_CODES: dict[str, str] = {
     "0100": "古遗址",
     "0200": "古墓葬",
@@ -22,7 +22,7 @@ CATEGORY_CODES: dict[str, str] = {
     "0600": "其他",
 }
 
-# 中文 → 编码（反向表，含常见别名），灌库/导入时容错用。
+# 中文 → 编码(含常见别名),灌库 / 导入时容错匹配。
 CATEGORY_ALIASES: dict[str, str] = {
     "古遗址": "0100",
     "古文化遗址": "0100",
@@ -42,8 +42,8 @@ CATEGORY_ALIASES: dict[str, str] = {
 }
 
 
-# ── 文物保护级别 ─────────────────────────────────────────────
-# `relics.rank` 落库为单字符："1"..."5"。
+# ── 文物保护级别 ────────────────────────────────────────────
+# `relics.rank` 落库为单字符 "1" ~ "5"。
 RANK_CODES: dict[str, str] = {
     "1": "全国重点文物保护单位",
     "2": "省级文物保护单位",
@@ -74,8 +74,8 @@ RANK_ALIASES: dict[str, str] = {
 }
 
 
-# ── 普查来源类型（四普使用） ────────────────────────────────
-# 与资源地图 getRelicPhoto 的 searchType 保持一致。
+# ── 普查来源类型(四普) ─────────────────────────────────────
+# 与国家文物局资源地图 getRelicPhoto 的 searchType 一致。
 SEARCH_TYPE_CODES: dict[str, str] = {
     "2": "三普在册",
     "12": "县级以上公布",
@@ -96,7 +96,7 @@ SEARCH_TYPE_ALIASES: dict[str, str] = {
 
 # ── 规范化入口 ───────────────────────────────────────────────
 def normalize_category(value: Optional[str]) -> str:
-    """中文字符串或编码 → 4 位编码。空值或无法识别的返回 '0600'。"""
+    """中文或编码 → 4 位编码;空值/未识别返回 '0600'。"""
     if not value:
         return "0600"
     v = str(value).strip()
@@ -111,7 +111,7 @@ def normalize_category(value: Optional[str]) -> str:
 
 
 def normalize_rank(value: Optional[str]) -> str:
-    """中文级别 → '1'..'5'。空值或无法识别的按未定级处理。"""
+    """级别文本 → '1'~'5';空值/未识别视为未定级 '5'。"""
     if not value:
         return "5"
     v = str(value).strip()
@@ -126,7 +126,7 @@ def normalize_rank(value: Optional[str]) -> str:
 
 
 def normalize_search_type(value: Optional[str]) -> str:
-    """普查来源 → 编码。默认按'三普在册'处理。"""
+    """普查来源 → 编码;默认视为"三普在册"。"""
     if not value:
         return "2"
     v = str(value).strip()
@@ -142,10 +142,10 @@ def normalize_search_type(value: Optional[str]) -> str:
 
 # ── 坐标规范化 ───────────────────────────────────────────────
 def parse_coord(value) -> Optional[float]:
-    """坐标字段容错解析：
-    - 十进制字符串 "116.3426" / float "116.3426" → 116.3426
-    - 度分秒字符串 "116-18-1.7064" 或 "116°18'1.7064\""      → 十进制
-    - 空/无法解析 → None
+    """坐标容错解析:
+    - 十进制 "116.3426" / 116.3426          → 116.3426
+    - 度分秒 "116-18-1.7064" / 116°18'1.7064" → 十进制
+    - 空 / 无法解析                          → None
     """
     if value is None:
         return None
@@ -156,13 +156,11 @@ def parse_coord(value) -> Optional[float]:
     if not s:
         return None
 
-    # 尝试直接当十进制解析
     try:
         return float(s)
     except ValueError:
         pass
 
-    # 度分秒：支持 - / ° ' " 等多种分隔
     import re
     parts = re.split(r"[-°'′\"″\s]+", s)
     parts = [p for p in parts if p]

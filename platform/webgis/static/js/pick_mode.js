@@ -1,31 +1,31 @@
-// 与后台管理系统（/admin-ui/）打通的 URL 参数 & 拾点模式。
+// 主图 ↔ 后台管理(/admin-ui/)联动:URL 参数与拾点模式。
 //
-// 约定：
-//   /?relic=<code>        打开主图后自动 flyTo + showInfo 到该文物
-//   /?pick=1              进入拾点模式，单击地图任意处后把经纬度 postMessage 回 opener
-//   /?pick=1&code=<code>  带 code 时表示"给这条文物选坐标"，回传消息里带上
+// URL 参数:
+//   ?relic=<code>         启动后 flyTo + showInfo 到该文物
+//   ?pick=1               进入拾点,单击地图后 postMessage 回传经纬度
+//   ?pick=1&code=<code>   携带 code,表示给该文物选坐标
 //
-// postMessage 协议（发送给 window.opener，targetOrigin=当前 origin）：
-//   { type: 'relic-pick', lng: number, lat: number, alt: number|null, code: string|null }
+// postMessage 协议(targetOrigin = opener origin):
+//   { type: 'relic-pick', lng, lat, alt, code }
 //   { type: 'relic-pick-cancel' }
 //
-// 由 app.js 在 init() 完成后调用 window.PickMode.handleUrlParams()。
+// 由 app.js init() 结束后调用 PickMode.handleUrlParams()。
 (function () {
     'use strict';
 
     const STATE = {
         enabled: false,
-        code: null,           // 当前被编辑的文物 code（仅做回显，可为空）
-        handler: null,        // Cesium ScreenSpaceEventHandler
-        banner: null,         // 顶部横幅 DOM
-        prevCursor: null,     // 进入时的 canvas cursor，退出时还原
+        code: null,
+        handler: null,
+        banner: null,
+        prevCursor: null,
     };
 
     function _canvas() {
         return (window.viewer && viewer.scene && viewer.scene.canvas) || null;
     }
 
-    // 顶部横幅，直观告诉管理员"你在点选坐标"
+    // 顶部横幅,提示当前处于拾点模式。
     function _mountBanner() {
         if (STATE.banner) return;
         const b = document.createElement('div');
@@ -58,11 +58,10 @@
         }
     }
 
-    // 解析屏幕坐标 → 经纬度/高度。命中地形优先，否则打到地球椭球。
+    // 屏幕坐标 → 经纬度 / 高度。优先 pickPosition 命中模型或地形,否则走椭球相交。
     function _screenToLngLat(click) {
         const viewer = window.viewer;
         if (!viewer) return null;
-        // 优先用 pickPosition（命中模型/地形）
         let carto = null;
         if (viewer.scene.pickPositionSupported) {
             const cartesian = viewer.scene.pickPosition(click.position);
@@ -70,7 +69,6 @@
                 carto = Cesium.Cartographic.fromCartesian(cartesian);
             }
         }
-        // 否则用射线与椭球的交点
         if (!carto) {
             const ray = viewer.camera.getPickRay(click.position);
             if (!ray) return null;
@@ -101,9 +99,9 @@
         if (typeof toast === 'function') {
             toast(`已拾取：${coord.lng.toFixed(5)}, ${coord.lat.toFixed(5)}`);
         }
-        // 默认回传后自动退出 + 关窗，让管理员回到编辑表单继续操作
+        // 回传后自动退出拾点模式并关闭本窗口。
         disable();
-        // 给 Element Plus 发消息留 200ms，再关自己
+        // 给 opener 事件循环 200ms 响应空间,再关闭自身。
         setTimeout(() => {
             if (window.opener && !window.opener.closed) {
                 try { window.close(); } catch (_) {}
@@ -111,10 +109,9 @@
         }, 250);
     }
 
-    // 推断 opener 的 origin：
-    //   - 生产期后台和主图同源（都在 FastAPI 下），用 window.location.origin 最安全
-    //   - 开发期后台在 :5173、主图在 :8000 跨源，走 document.referrer 拿 opener origin
-    //   - 都拿不到时退到 '*'（消息体仅含坐标，无敏感信息）
+    // 推断 opener 的 origin。生产同源走 window.location.origin;
+    // 开发期跨源(后台 5173 / 主图 8000)时用 referrer 推断;都拿不到兜底 '*'
+    // (消息体仅含坐标,无敏感信息)。
     function _openerOrigin() {
         try {
             if (document.referrer) {
@@ -130,7 +127,6 @@
             const target = window.opener || (window.parent !== window ? window.parent : null);
             if (!target) return;
             const origin = _openerOrigin();
-            // 优先同源；若跨源（开发模式）则按 referrer 推断，最后兜底 '*'
             target.postMessage(msg, origin || '*');
         } catch (e) {
             console.warn('[pick_mode] postBack 失败', e);
@@ -193,14 +189,13 @@
     }
 
     // ── URL 参数入口 ────────────────────────────────────
-    // 处理 ?relic / ?pick。由 app.js 在 init() 结束后调用。
+    // 处理 ?relic / ?pick,app.js init() 结束后调用。
     function handleUrlParams() {
         const params = new URLSearchParams(window.location.search);
 
         const pick = params.get('pick');
         if (pick === '1' || pick === 'true') {
             const code = params.get('code');
-            // viewer 可能还在加载地形/影像，enable() 只需 viewer 对象存在即可
             enable({ code });
             return;
         }
@@ -211,7 +206,7 @@
         }
     }
 
-    // 打开主图时若带 ?relic=code，自动飞到该文物并弹信息面板
+    // ?relic=code 时自动 flyTo 并展示信息面板。
     function _autoFocusRelic(code) {
         const tryFly = () => {
             if (typeof window.flyTo === 'function'
@@ -221,14 +216,13 @@
                     return true;
                 }
             }
-            // 即便 allRelics 里没有（筛选模式下可能被过滤），也尝试直接调 showInfoByCode
             if (typeof window.showInfoByCode === 'function') {
                 window.showInfoByCode(code);
                 return true;
             }
             return false;
         };
-        // 等 allRelics 就绪，轮询最多 10s
+        // 等 allRelics 就绪,最多轮询 10 秒。
         let tries = 0;
         const t = setInterval(() => {
             tries += 1;

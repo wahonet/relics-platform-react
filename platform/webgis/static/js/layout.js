@@ -3,14 +3,13 @@ const dashState = { dashL: { side: 'left' }, dashR: { side: 'right' } };
 
 function _isMobile() { return window.innerWidth <= 768; }
 
-// 窗口尺寸变化时也要重算一次停靠位置，避免浏览器拖拽窗口后面板重叠。
+// 窗口尺寸变化时重算停靠位置,避免拖动窗口后面板重叠。
 window.addEventListener('resize', function () {
     clearTimeout(window.__layoutResizeT);
     window.__layoutResizeT = setTimeout(function () { updateLayout(); }, 120);
 });
 
-// 从 CSS 自定义属性里读取像素尺寸，保证 UI 尺寸切换（sm/md/lg）时
-// 仪表盘 / 图例 / 信息框的停靠位置能同步跟上。
+// 从 CSS 自定义属性读取像素尺寸,使 UI 尺寸切换(sm/md/lg)时面板位置同步更新。
 function _cssVarPx(name, fallback) {
     const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     const n = parseInt(v, 10);
@@ -163,8 +162,7 @@ function toggleFullscreen() {
 }
 
 function resetAll() {
-    // 先把"飞回主视角"这一步规划好:不管前面清筛选 / 刷新视口有没有抛异常,
-    // 镜头都必须最终回到用户锁定的主视角,否则用户会觉得"重置按钮坏了"。
+    // "飞回主视角"必须兜底:即便清筛选/刷视口抛错,最终镜头也要落在主视角上。
     const goHome = function () {
         if (typeof flyToHome === 'function') {
             flyToHome(1.2);
@@ -221,8 +219,8 @@ function resetAll() {
         console.error('[resetAll] 清理筛选/UI 时出错,但仍会飞回主视角:', e);
     }
 
-    // 兜底:先同步飞一次。如果 onFilterChange 里的视口刷新在 moveEnd 时抢了镜头,
-    // 我们在微任务结束后再飞一次,确保镜头最终落在主视角上。
+    // 先飞一次;若 onFilterChange 触发的视口刷新在 moveEnd 抢镜头,
+    // 微任务结束后再飞一次兜底。
     goHome();
     setTimeout(goHome, 50);
 
@@ -239,8 +237,7 @@ function toggleSettings() {
     const open = panel.classList.toggle('open');
     mask.classList.toggle('open', open);
     btn.classList.toggle('on', open);
-    // 面板打开时顺手初始化"主视角"级联下拉(懒加载 shandong JSON,
-    // 只在用户真的去改设置时才去拉 26KB 的行政区数据)
+    // 面板打开时才加载 shandong_admin.json(~26 KB),懒初始化主视角级联下拉。
     if (open && typeof initHomeViewUI === 'function') {
         try { initHomeViewUI(); } catch (e) {}
     }

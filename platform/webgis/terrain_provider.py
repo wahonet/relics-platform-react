@@ -1,12 +1,12 @@
 """本地 DEM 地形瓦片。
 
-启动时把 data/input/04_dem/ 下的 GeoTIFF 拼接到内存,运行时按
-Cesium CustomHeightmapTerrainProvider 的 (level, x, y) 请求插值出
-65x65 Float32 小端高程瓦片。
+启动时把 `data/input/04_dem/` 下的 GeoTIFF 合并到内存,运行时按
+Cesium CustomHeightmapTerrainProvider 的 (level, x, y) 插值出 65x65
+Float32 小端高程瓦片。
 
-当前 `_parse_extent` 支持 ASTER GDEM v2 文件名:
-    ASTGTM2_N{lat}E{lon}_dem.tif  ->  覆盖 [lat, lat+1] x [lon, lon+1]
-其它 DEM 来源请按此函数扩展。
+`_parse_extent` 默认支持 ASTER GDEM v2 命名:
+    ASTGTM2_N{lat}E{lon}_dem.tif  →  [lat, lat+1] × [lon, lon+1]
+其它来源需按此扩展。
 """
 from __future__ import annotations
 

@@ -378,7 +378,7 @@ import { useDictStore } from '@/stores/dict';
 
 interface Props {
   modelValue: boolean;
-  // null → 新增；string → 编辑该 code
+  // null = 新建;string = 按 code 编辑
   code?: string | null;
 }
 const props = withDefaults(defineProps<Props>(), { code: null });
@@ -408,7 +408,7 @@ const miniLayer = ref<'sat' | 'osm'>('sat');
 let leafMap: L.Map | null = null;
 let leafMarker: L.Marker | null = null;
 let leafTile: L.TileLayer | null = null;
-// marker 拖拽 / 地图单击产生的坐标变更，防止 watch 回环
+// 防 watch 回环:地图触发的坐标变更会临时置 true。
 let syncingFromMap = false;
 
 const MARKER_ICON = L.divIcon({
@@ -440,7 +440,7 @@ interface FormShape {
   photo_count: number;
   drawing_count: number;
   status: number;
-  // 仅编辑模式
+  // 仅编辑模式使用。
   expected_version: number;
   updated_at_str: string;
 }
@@ -488,7 +488,7 @@ const rules: FormRules<FormShape> = {
   lat: [{ required: true, type: 'number', message: '请输入纬度', trigger: 'blur' }],
 };
 
-// 打开对话框时，按模式加载/重置
+// 打开对话框时,根据 code 区分编辑/新建并初始化表单。
 watch(
   () => props.modelValue,
   async (open) => {
@@ -506,11 +506,11 @@ watch(
 
 async function loadExisting(code: string) {
   loading.value = true;
-  // 主体详情与最近变更并行拉，哪个先回都不影响另一个
+  // 详情与最近变更并行拉取,互不阻塞。
   loadRecentAudit(code);
   try {
     const r: any = await adminApi.getRelic(code);
-    // get_relic_full 返回 legacy 结构（center_lng / heritage_level / …），统一一下
+    // 后端返回 legacy 结构(center_lng / heritage_level / ...),这里统一到表单字段。
     form.code = r.code || r.archive_code || code;
     form.name = r.name || '';
     form.category = normCat(r.category || r.category_main);
@@ -609,7 +609,7 @@ async function submit() {
     emit('saved', form.code);
     emit('update:modelValue', false);
   } catch (err: any) {
-    // 409 版本冲突：提示重新加载
+    // 409 版本冲突,提示重新拉取最新版本。
     if (err?.response?.status === 409 && isEdit.value) {
       ElMessageBox.confirm(
         '数据已被他人修改，保存失败。是否重新加载最新版本？',
@@ -619,7 +619,7 @@ async function submit() {
         .then(() => loadExisting(form.code))
         .catch(() => {});
     }
-    // 其他错误（400、404、500）由 http 拦截器统一提示
+    // 其它错误(400 / 404 / 500)由 http 拦截器统一提示。
   } finally {
     saving.value = false;
   }
@@ -630,14 +630,12 @@ function handleClose() {
   emit('update:modelValue', false);
 }
 
-// 主图 origin：
-//   - 生产：和后台同源（都挂在 FastAPI 下），直接用相对路径
-//   - 开发：admin-vue 跑在 :5173，主图在 :8000，这里要补全 origin
+// 主图 origin:生产同源留空走相对路径;开发期后台 5173 / 主图 8000 需补全。
 const MAIN_MAP_ORIGIN = import.meta.env.DEV
   ? (import.meta.env.VITE_MAIN_MAP_ORIGIN || 'http://127.0.0.1:8000')
   : '';
 
-// 收到 message 时接受的 origin 白名单（生产同源；开发再放宽到 main map 端口）
+// 接收 message 的 origin 白名单:生产同源;开发放宽到主图端口。
 const ALLOWED_ORIGINS = new Set<string>([
   window.location.origin,
   ...(import.meta.env.DEV
@@ -651,18 +649,17 @@ function openOnMap() {
   window.open(url, '_blank', 'noopener');
 }
 
-// ── 打通主图的"坐标点选" ─────────────────────────────
-// 点"到主图点选"后：
-//   1. 在新窗口打开主图 /?pick=1[&code=...]
-//   2. 监听 window.message，收到 relic-pick / relic-pick-cancel 后回填
-//   3. 主图端会在回传成功后自己关窗，这里收一次就清掉监听
+// ── 主图坐标拾点联动 ─────────────────────────────────
+// 1) 新开主图 /?pick=1[&code=...]
+// 2) 监听 window.message:relic-pick / relic-pick-cancel → 回填表单
+// 3) 主图在回传后自动关窗,本端收到一次后即清理监听。
 const pickWinRef = ref<Window | null>(null);
 const waitingPick = ref(false);
 
 function pickOnMap() {
   const code = form.code ? `&code=${encodeURIComponent(form.code)}` : '';
   const url = `${MAIN_MAP_ORIGIN}/?pick=1${code}`;
-  // 注意：不能用 noopener/noreferrer，主图需要通过 window.opener.postMessage 回传
+  // 不能带 noopener / noreferrer,主图需通过 window.opener.postMessage 回传。
   const win = window.open(url, 'relics_pick_window');
   if (!win) {
     ElMessage.error('浏览器阻止了弹窗，请允许后再试');
@@ -680,7 +677,7 @@ function onPickMessage(ev: MessageEvent) {
   if (!data || typeof data !== 'object') return;
 
   if (data.type === 'relic-pick') {
-    // 如果消息里带 code 且与当前编辑不一致（比如用户切换了窗口），跳过
+    // 消息里带 code 且与当前编辑不一致(用户切换了窗口)时忽略。
     if (data.code && form.code && String(data.code) !== String(form.code)) {
       return;
     }
@@ -728,8 +725,8 @@ function copyCoord() {
   );
 }
 
-// ── 最近变更（编辑模式） ─────────────────────────────
-// 保存后重新拉一次：让用户立刻看到自己的这次变更
+// ── 最近变更(编辑模式) ────────────────────────────────
+// 保存后重新拉取,让用户立即看到自己的这次变更。
 async function loadRecentAudit(code: string) {
   try {
     const resp = await adminApi.listAudit({ code, limit: 5 });
@@ -741,7 +738,7 @@ async function loadRecentAudit(code: string) {
 
 function jumpFullHistory() {
   if (!form.code) return;
-  // 同时关闭当前对话框
+  // 关闭当前对话框并跳转到审计日志页。
   emit('update:modelValue', false);
   router.push({ path: '/audit', query: { code: form.code } });
 }
@@ -765,9 +762,7 @@ function fmtAuditTs(ts: number): string {
   const d = new Date(ts * 1000);
   return d.toLocaleString('zh-CN', { hour12: false });
 }
-// 把一条审计记录缩成一行话：
-//   update：改了 N 个字段：a、b、c (+2)
-//   create / delete：无业务摘要
+// 把一条审计记录摘要成"改了 N 个字段"一句话;create / delete 不摘要。
 function auditSummaryText(r: AuditRow): string {
   if (r.action !== 'update') return '';
   let before: Record<string, unknown> = {};
@@ -793,7 +788,7 @@ function auditSummaryText(r: AuditRow): string {
   return `改了 ${keys.length} 个字段：${shown}${more}`;
 }
 
-// 字段名人话映射（其他字段直接显示英文 key）
+// 字段名中文映射,未覆盖的字段直接显示英文 key。
 const FIELD_LABEL: Record<string, string> = {
   name: '名称',
   category: '类别',
@@ -812,19 +807,18 @@ const FIELD_LABEL: Record<string, string> = {
 };
 
 // ── mini-map 初始化 / 销毁 / 同步 ─────────────────────
-// 瓦片走已有的 /tiles/{provider}/{z}/{x}/{y} 代理（开发期走 vite proxy，生产同源）
+// 瓦片复用 /tiles/{provider}/{z}/{x}/{y} 代理(开发走 vite proxy,生产同源)。
 function tileUrl(kind: 'sat' | 'osm'): string {
   const provider = kind === 'sat' ? 'arcgis_sat' : 'osm';
-  // 用相对路径即可：vite dev 下有 proxy /tiles → 8000；生产同源
   return `/tiles/${provider}/{z}/{x}/{y}`;
 }
 
-// 默认中心：河南郑州登封附近，给一个合理 fallback
+// 默认中心(河南郑州登封附近),作为无坐标时的兜底视图。
 const DEFAULT_CENTER: [number, number] = [34.45, 113.03];
 
 async function ensureMiniMap() {
   if (leafMap) {
-    // 已经存在：确保尺寸正确（Tab 切换或 Dialog 由隐到显都需要）
+    // 已存在时确保尺寸正确(Tab 切换 / Dialog 显隐均可能需要)。
     await nextTick();
     leafMap.invalidateSize();
     return;
@@ -863,7 +857,7 @@ async function ensureMiniMap() {
     placeMiniMarker(lat, lng);
   });
 
-  // 对话框展开动画期间容器尺寸可能未稳定，再 invalidate 一次
+  // 对话框展开动画期间容器尺寸可能未稳定,额外 invalidate 一次。
   setTimeout(() => leafMap?.invalidateSize(), 120);
 }
 
@@ -912,18 +906,18 @@ function destroyMiniMap() {
   leafTile = null;
 }
 
-// 切到"位置"Tab 时按需初始化/刷新尺寸
+// 切到"位置"Tab 时按需初始化 / 刷新尺寸。
 watch(activeTab, (t) => {
   if (t === 'geo') ensureMiniMap();
   if (t === 'neighbors') {
-    // 首次切换才拉；之后用户手动 refresh
+    // 首次切换才拉,之后由用户手动 refresh。
     if (!neighbors.value.length && !nbLoading.value && isEdit.value) {
       loadNeighbors();
     }
   }
 });
 
-// 坐标变了之后清空 neighbors，下次切 tab 再拉
+// 坐标变化后清空 neighbors,下次切 tab 再拉。
 watch(
   () => [form.lng, form.lat] as const,
   () => { neighbors.value = []; },
@@ -963,8 +957,7 @@ function categoryLabel(code: string): string {
 }
 
 function openNeighbor(code: string) {
-  // 让父组件重新打开成编辑该 code —— 通过抛出 saved 不合适
-  // 简单做法：先关闭当前再由外部处理；这里用全局事件：触发 router 跳 relics + 自动打开
+  // 关闭当前对话框并让 Relics 页自动打开目标 code 的编辑。
   router.push({ path: '/relics', query: { search: code, auto_open: code } });
   emit('update:modelValue', false);
 }
@@ -977,7 +970,7 @@ function focusOnMainMap(code: string) {
   );
 }
 
-// 外部改动（加载详情、主图回传、手工输入）→ 同步到 marker
+// 外部(加载详情 / 主图回传 / 手工输入)改坐标 → 同步到 marker。
 watch(
   () => [form.lng, form.lat] as const,
   ([lng, lat]) => {
@@ -990,7 +983,7 @@ watch(
   },
 );
 
-// 对话框关闭：清理 map
+// 对话框关闭时清理 Leaflet 实例。
 watch(
   () => props.modelValue,
   (open) => {

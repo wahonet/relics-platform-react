@@ -1,7 +1,7 @@
-"""Step 05 | 工作日志 Excel -> PDF。
+"""Step 05 | 工作日志 Excel → PDF。
 
-每个 xlsx 期望含 3 个 sheet: 日志正文 / 随手绘 / 工作照,
-渲染成 3 页 A4 PDF, 输出 data/output/worklog_pdfs/<YYYY-MM-DD>_worklog.pdf。
+每个 xlsx 期望含 3 个 sheet:日志正文 / 随手绘 / 工作照,
+渲染为 3 页 A4 PDF,输出到 `data/output/worklog_pdfs/<YYYY-MM-DD>_worklog.pdf`。
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ PAGE_W, PAGE_H = A4
 MARGIN = 2.0 * cm
 CONTENT_W = PAGE_W - 2 * MARGIN
 
-# 按优先级搜索 CJK 字体(Win/macOS/Linux 常见路径),未找到则回退 Helvetica
+# 按优先级搜索 CJK 字体(Win / macOS / Linux 常见路径),找不到则回退 Helvetica。
 _FONT_CANDIDATES = [
     (r"C:\Windows\Fonts\msyh.ttc", "MSYaHei"),
     (r"C:\Windows\Fonts\msyhbd.ttc", "MSYaHeiBold"),
@@ -371,7 +371,8 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     files = sorted(in_dir.glob("*.xlsx"))
-    files = [f for f in files if not f.name.startswith("~$")]  # 跳过 Office 临时锁文件
+    # 过滤 Office 临时锁文件。
+    files = [f for f in files if not f.name.startswith("~$")]
 
     if not files:
         log.warning("未发现任何 .xlsx 文件。")

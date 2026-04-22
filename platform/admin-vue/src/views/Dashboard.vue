@@ -389,7 +389,7 @@ const pipelineLoading = ref(false);
 const tilesSummary = ref<TilesSummary | null>(null);
 const tilesLoading = ref(false);
 
-// ── 图表 refs ────────────────────────────────
+// ── 图表 DOM refs ────────────────────────────
 const donutCatRef = ref<HTMLDivElement>();
 const barRankRef = ref<HTMLDivElement>();
 const barTownshipRef = ref<HTMLDivElement>();
@@ -399,7 +399,7 @@ const pieSearchRef = ref<HTMLDivElement>();
 
 const charts: echarts.ECharts[] = [];
 
-// ── 主题（深色，对齐主图）────────────────────
+// ── 深色主题,配色与主图一致 ─────────────────
 const TEXT = '#c9d1d9';
 const TEXT_DIM = '#8b949e';
 const LINE = 'rgba(88, 166, 255, 0.15)';
@@ -473,7 +473,7 @@ async function reload() {
   pipelineLoading.value = true;
   tilesLoading.value = true;
   try {
-    // 三处数据并行拉：stats / pipeline / tiles；图表等 stats 到再画
+    // stats / pipeline / tiles 并行拉取;图表在 stats 返回后再画。
     const [s] = await Promise.all([
       adminApi.statsOverview().catch(() => null),
       adminApi.pipeline()
@@ -493,7 +493,7 @@ async function reload() {
   }
 }
 
-// ── 瓦片缓存卡片:小工具 ──────────────────────
+// ── 瓦片缓存卡片:格式化工具 ──────────────────
 function fmtMB(bytes: number | undefined): string {
   if (!bytes) return '0 MB';
   const mb = bytes / 1024 / 1024;
@@ -528,7 +528,7 @@ const tilesProviderList = computed(() => {
 });
 
 function openMapDownload() {
-  // 地图首页装有全局 JS 函数 toggleDownloadPanel(),开新页到 / 即可
+  // 主图首页带有全局 toggleDownloadPanel(),直接新开 / 即可。
   window.open('/', '_blank');
 }
 
@@ -597,7 +597,7 @@ function renderCharts() {
 
 function mountChart(el: HTMLDivElement | undefined, opt: EChartsOption): echarts.ECharts | null {
   if (!el) return null;
-  // 复用已有实例，改切数据时直接 setOption 不重建
+  // 复用已有实例,切数据时直接 setOption 不重建。
   let inst = echarts.getInstanceByDom(el);
   if (!inst) {
     inst = echarts.init(el);
@@ -607,7 +607,7 @@ function mountChart(el: HTMLDivElement | undefined, opt: EChartsOption): echarts
   return inst;
 }
 
-// 1. 类别环形图
+// 类别环形图。
 function renderDonutCategory() {
   const data = (stats.value?.by_category || [])
     .filter((d) => d.count > 0)
@@ -639,7 +639,7 @@ function renderDonutCategory() {
   });
 }
 
-// 2. 保护级别柱状
+// 保护级别柱状。
 function renderBarRank() {
   const rows = stats.value?.by_rank || [];
   const SHORT: Record<string, string> = { '1': '国保', '2': '省保', '3': '市保', '4': '县保', '5': '未定级' };
@@ -679,7 +679,7 @@ function renderBarRank() {
   });
 }
 
-// 3. 乡镇 Top15 横向条形
+// 乡镇 Top15 横向条形。
 function renderBarTownship() {
   const rows = [...(stats.value?.by_township_top || [])].reverse();
 
@@ -722,7 +722,7 @@ function renderBarTownship() {
   });
 }
 
-// 4. 14 天审计折线
+// 近 14 天审计折线。
 function renderLineAudit() {
   const a = stats.value?.audit_14days;
   if (!a) return;
@@ -772,7 +772,7 @@ function mkLine(name: string, data: number[], color: string) {
   };
 }
 
-// 5. 年代 Top8
+// 年代 Top8。
 function renderBarEra() {
   const rows = stats.value?.by_era_stats_top || [];
   mountChart(barEraRef.value, {
@@ -805,7 +805,7 @@ function renderBarEra() {
   });
 }
 
-// 6. 来源饼图
+// 普查来源饼图。
 function renderPieSearch() {
   const rows = (stats.value?.by_search_type || []).filter((r) => r.count > 0);
   mountChart(pieSearchRef.value, {
@@ -829,9 +829,9 @@ function renderPieSearch() {
   });
 }
 
-// ── 最近活动格式化 ─────────────────────────
+// ── 时间格式化 ────────────────────────────
 function shortDay(d: string): string {
-  // '2026-04-20' → '04-20'
+  // '2026-04-20' → '04-20'。
   return d.length >= 10 ? d.slice(5) : d;
 }
 function fmtTs(ts: number): string {

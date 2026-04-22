@@ -1,8 +1,8 @@
-"""离线底图瓦片下载工具。
+"""离线底图瓦片批量下载工具。
 
-按 config.yaml 里的 geo.bounds 把瓦片批量拉到
-data/output/tile_cache/<provider>/<z>/<x>/<y>.tile,后端 /tiles 路由
-会优先从这里读。默认同时下 arcgis_sat 和 osm,可用 --provider 过滤。
+按 `config.yaml → geo.bounds` 批量拉取瓦片到
+`data/output/tile_cache/<provider>/<z>/<x>/<y>.tile`,后端 `/tiles` 路由
+会优先从这里读取。默认同时下载 arcgis_sat + osm,可用 `--provider` 过滤。
 
 用法:
     python platform/tools/download_tiles.py

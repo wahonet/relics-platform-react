@@ -1,21 +1,20 @@
-"""step07：把 step02-04 / step06 的产物灌入 SQLite 数据库。
+"""Step 07 | 把 step02 ~ step04 / step06 的产物灌入 SQLite。
 
-输出：
-    data/output/dataset/relics.db
+读取 `data/output/dataset/` 下:
+    relics_full.json           主数据(必需)
+    photo_index.csv            照片索引(可选)
+    drawing_index.csv          图纸索引(可选)
+    relics_polygons.geojson    面几何(可选)
 
-读取：
-    data/output/dataset/relics_full.json           主数据
-    data/output/dataset/photo_index.csv            照片索引（可选）
-    data/output/dataset/drawing_index.csv          图纸索引（可选）
-    data/output/dataset/relics_polygons.geojson    面几何（可选）
+输出: `data/output/dataset/relics.db`。幂等,每次运行全量重建。
 
-幂等：每次运行全量重建。code 为业务主键，表结构见 Schema 注释。
-
-Schema 亮点：
-- relics_rtree        R-Tree 虚表承载 bbox 索引，id_int 通过 relics_rtree_map 映射到 relic.id
-- relics_fts          FTS5 虚表承载中文全文搜索（unicode61 + 2-gram-ish tokenize）
-- stats_cache         聚合结果 key → JSON，admin 写入后异步刷新
-- audit_log           Admin 操作审计
+主要表:
+- relics          业务主表,code 为业务主键,version 用于乐观锁
+- relics_rtree    R-Tree 空间索引(bbox),通过 relics_rtree_map 桥接字符串 id
+- relics_fts      FTS5 trigram tokenizer,支持中文子串搜索
+- photos / drawings / polygons  关联资源
+- audit_log       管理操作审计
+- stats_cache     聚合结果(key → JSON),Admin 写入后异步刷新
 """
 from __future__ import annotations
 
@@ -38,7 +37,7 @@ from codes import (
 log = get_logger("step07_build_db")
 
 
-# ── Schema ────────────────────────────────────────────────────
+# ── Schema ──────────────────────────────────────────────────
 SCHEMA_SQL = """
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
@@ -100,9 +99,8 @@ CREATE TABLE relics_rtree_map (
     relic_id TEXT UNIQUE NOT NULL REFERENCES relics(id) ON DELETE CASCADE
 );
 
--- 全文搜索：trigram tokenizer（SQLite 3.34+）对中文子串友好。
--- 索引所有 3-gram 组合，`MATCH '家祠'` 内部会自动匹配 2 字及以上子串。
--- 若 SQLite 未编译 trigram 可回退到 unicode61 但不支持中文分词。
+-- 全文搜索:trigram tokenizer(SQLite >= 3.34),对中文子串友好。
+-- 若 SQLite 未编译 trigram,可回退 unicode61 但不支持中文分词。
 CREATE VIRTUAL TABLE relics_fts USING fts5(
     code, name, brief, era, township, village,
     tokenize = "trigram"
@@ -166,7 +164,7 @@ def _int_or_zero(v) -> int:
         return 0
 
 
-# relics 主表字段（业务字段）；其余全部塞到 extra_json。
+# relics 主表保留的业务字段,其余统一塞入 extra_json。
 _MAIN_FIELDS = {
     "archive_code", "name", "category_main", "heritage_level", "survey_type",
     "center_lng", "center_lat", "center_alt", "township", "address",
@@ -217,7 +215,7 @@ def _insert_relics(conn: sqlite3.Connection, relics: list[dict], pdf_map: dict[s
         search_type = normalize_search_type(r.get("survey_type"))
 
         township_raw = r.get("township") or ""
-        # step02 的乡镇名有时带序号前缀"01示范街道"，存库前统一剥掉
+        # 去掉乡镇名的排序前缀(如 "01示范街道") 再入库。
         import re
         township = re.sub(r"^[\d_\-\s]+", "", township_raw).strip() or township_raw
 
@@ -234,7 +232,7 @@ def _insert_relics(conn: sqlite3.Connection, relics: list[dict], pdf_map: dict[s
         has_photo = 1 if photo_count > 0 else 0
         has_pdf = 1 if pdf_map.get(code) else 0
 
-        # 非主字段整体序列化到 extra_json，老前端/详情页还用得上
+        # 非主字段整体塞入 extra_json,供详情页与老前端使用。
         extra = {k: v for k, v in r.items() if k not in _MAIN_FIELDS}
         extra_json = json.dumps(extra, ensure_ascii=False) if extra else "{}"
 
@@ -355,7 +353,7 @@ def _insert_polygons(conn: sqlite3.Connection, geojson_path: Path) -> int:
 
 
 def _scan_pdf_dir(pdf_dir: Path) -> dict[str, str]:
-    """扫描 data/input/01_archives_pdf/<code>/*.pdf，返回 {code: first_pdf_path}。"""
+    """扫描 `data/input/01_archives_pdf/<code>/*.pdf`,返回 `{code: first_pdf}`。"""
     result: dict[str, str] = {}
     if not pdf_dir.exists():
         return result
@@ -369,7 +367,7 @@ def _scan_pdf_dir(pdf_dir: Path) -> dict[str, str]:
 
 
 def _refresh_has_photo(conn: sqlite3.Connection) -> None:
-    """根据 photos 表实际行数回填 relics.has_photo。"""
+    """根据 photos 表实际记录回填 relics.has_photo。"""
     conn.execute(
         """
         UPDATE relics
@@ -383,7 +381,7 @@ def _refresh_has_photo(conn: sqlite3.Connection) -> None:
 
 def build_db(db_path: Path, dataset_dir: Path, pdf_dir: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    # 全量重建：先删后建
+    # 全量重建:先删后建。
     if db_path.exists():
         db_path.unlink()
 

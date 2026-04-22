@@ -418,7 +418,7 @@ const rows = ref<RelicRow[]>([]);
 const total = ref(0);
 const townshipOptions = ref<string[]>([]);
 
-// 状态 Tab：1 已发布 / 0 草稿 / -1 回收站
+// 状态 Tab: 1 已发布 / 0 草稿 / -1 回收站。
 const activeStatus = ref<1 | 0 | -1>(1);
 const emptyText = computed(() => {
   if (activeStatus.value === -1) return '回收站为空';
@@ -439,7 +439,7 @@ const bulkDeleteTip = computed(
   () => `确认对 ${selectedCount.value} 条文物执行软删除？可随后在"草稿/已删除"恢复`,
 );
 
-// 空间筛选：[minLng, minLat, maxLng, maxLat]
+// 空间筛选:[minLng, minLat, maxLng, maxLat]。
 const bboxPickerVisible = ref(false);
 const bboxFilter = ref<[number, number, number, number] | null>(null);
 const bboxParam = computed(() =>
@@ -480,8 +480,7 @@ async function reload() {
       township: query.township || undefined,
       search_type: query.search_type || undefined,
       order_by: query.order_by,
-      // 后端默认 status=null 返回 status>=0（不含软删除）
-      // 我们这里三个 Tab 都显式传：1 / 0 / -1
+      // 后端 status=null 返回 status>=0(不含软删除);三个 Tab 始终显式传 1/0/-1。
       status: activeStatus.value,
       bbox: bboxParam.value,
     };
@@ -551,7 +550,7 @@ function viewAudit(code: string) {
   router.push({ path: '/audit', query: { code } });
 }
 
-// 跳主图：开发期 :8000，生产期同源
+// 主图 origin:生产同源留空;开发期后台 5173 / 主图 8000。
 const MAIN_MAP_ORIGIN = import.meta.env.DEV
   ? (import.meta.env.VITE_MAIN_MAP_ORIGIN || 'http://127.0.0.1:8000')
   : '';
@@ -630,7 +629,7 @@ function summarizeBulk(r: BulkResult, action: string) {
   }
 }
 
-// 导出 CSV：直接走 a 链接下载，复用浏览器 cookie
+// 导出 CSV:用 <a> 链接下载,直接复用浏览器 cookie。
 function exportCurrent() {
   if (total.value === 0) {
     ElMessage.warning('当前筛选下没有可导出的数据');
@@ -700,7 +699,7 @@ function hasAnyFlag(row: RelicRow): boolean {
   return !!(row.has_3d || row.has_pdf || row.has_boundary || row.photo_count || row.drawing_count);
 }
 
-// 从 URL query 读取筛选条件（Dashboard / Audit 跳转过来时用）
+// 从 URL query 读取筛选条件(Dashboard / Audit 跳转过来时用)。
 function syncFromRoute() {
   const q = route.query;
   if (typeof q.search === 'string') query.search = q.search;
@@ -719,7 +718,7 @@ function syncFromRoute() {
   query.page = 1;
 }
 
-// 路由 query 变动（同路由内再次跳转）时同步
+// 路由 query 变动(同路由内再次跳转)时同步筛选条件。
 watch(() => route.query, () => {
   syncFromRoute();
   reload();
@@ -729,11 +728,11 @@ watch(() => route.query, () => {
 async function maybeAutoOpen() {
   const target = typeof route.query.auto_open === 'string' ? route.query.auto_open : '';
   if (!target) return;
-  // 清掉 auto_open 参数，避免刷新/后退再次触发
+  // 清掉 auto_open 参数,避免刷新 / 后退重复触发。
   const q = { ...route.query };
   delete q.auto_open;
   await router.replace({ path: '/relics', query: q }).catch(() => {});
-  // 等列表加载完打开（失败也没关系，对话框只要传入 code 就会自己去取）
+  // 对话框内部会根据 code 主动拉取详情,失败不影响其它流程。
   openEdit(target);
 }
 

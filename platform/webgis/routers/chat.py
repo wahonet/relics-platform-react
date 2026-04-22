@@ -1,8 +1,7 @@
-"""AI 知识库问答(OpenAI 兼容接口,流式输出)。
+"""AI 知识库问答 (OpenAI 兼容协议,流式输出)。
 
-System prompt 用启动时缓存的全量文物/工作日志上下文拼接而成;
-每次请求再按 query 做一次轻量的关键词评分,追加 Top-K 相关文物/日志。
-所有配置(项目名、Key、模型、权重)均来自 config.yaml + store。
+启动时把全量文物与工作日志预烘焙成 system prompt;每次请求再按 query
+做轻量关键词评分,追加 Top-K 相关文物/日志。配置统一来自 config.yaml。
 """
 from __future__ import annotations
 
@@ -27,7 +26,7 @@ from routers import worklog as _wl_mod  # noqa: E402
 
 router = APIRouter()
 
-# 运行时状态,均在 init_chat() 中赋值
+# 运行时状态,init_chat() 中赋值。
 _client = None  # type: ignore[var-annotated]
 _full_context: str = ""
 _worklog_context: str = ""
@@ -110,8 +109,7 @@ def _build_system_prompt() -> str:
 
 
 def _build_full_context() -> str:
-    """启动时拼出一份文物全量上下文(总体统计 + 按乡镇分组的清单表格),
-    每次对话复用,避免把全量数据塞进每次请求。"""
+    """拼出全量文物上下文(总体统计 + 按乡镇分组的清单表格),作为 system prompt 复用。"""
     relics = store.relics
     if not relics:
         return ""
@@ -327,9 +325,8 @@ def _find_relevant_intros(query: str, top_k: int = 8) -> str:
 
 
 def init_chat() -> None:
-    """在 FastAPI lifespan 里调用:读配置、建客户端、预烘上下文。
-    API Key 未配置或仍为 ${VAR} 占位符时会把 _client 设为 None,
-    /chat 路由会返回提示而不是报错。"""
+    """在 lifespan 中调用:读配置、建客户端、预烘上下文。
+    API Key 缺失或仍为 ${VAR} 占位时 _client=None,/chat 返回友好提示。"""
     global _client, _full_context, _worklog_context
     global _project_name, _project_full_name
     global _default_model, _available_models

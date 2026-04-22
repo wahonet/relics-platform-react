@@ -1,4 +1,4 @@
-// 筛选逻辑、结果列表、视角定位。
+// 本地筛选、结果列表、视角定位。
 function populateFilters() {
     const towns = new Set(), levels = new Set(), conds = new Set();
     const lvDim = DIMS.find(d => d.id === 'heritage_level');
@@ -74,7 +74,7 @@ function onFilterChange() {
     dimColorMaps[activeGroup] = buildColorMap(allRelics, DIMS.find(d=>d.id===activeGroup));
     if (_symbolMode) _symbolCache = {};
 
-    // 地图点位：若 viewport 管理器已启动则下沉筛选到后端；否则走旧的 renderPoints(filtered)。
+    // viewport 已启动时下沉筛选至后端;否则回退本地渲染。
     if (window.viewport && window.Dict) {
         window.viewport.setFilters(_buildBackendFilters());
     } else {
@@ -91,13 +91,13 @@ function onFilterChange() {
     if (window.Bus) window.Bus.emit('filter:changed', { count: filtered.length, total: allRelics.length });
 }
 
-// 把前端筛选条件翻译成 by-bbox 能认的 URL 参数（国标编码）。
-// 只下沉 category/rank/township：cond/f3d/kw 仍由前端筛 filtered 列表，
-// 地图上会多出一些不满足 cond/f3d/kw 的点（可接受，避免来回重拉）。
+// 把前端筛选翻译为 /by-bbox 可识别的国标编码参数。
+// 仅下沉 category / rank / township;cond / 3d / kw 仍在前端过滤 filtered,
+// 可能会让地图多出少量不满足 cond 的点,换取避免频繁重拉的代价。
 function _buildBackendFilters() {
     const filters = {};
 
-    // category：activeCats 是中文名集合；若"全选"则不下沉以节省参数
+    // activeCats 中文名集合,全选时不下沉,减少参数。
     const allCatNames = new Set(allRelics.map(r => r.category_main).filter(Boolean));
     if (activeCats.size > 0 && activeCats.size < allCatNames.size) {
         const codes = [];
@@ -108,7 +108,7 @@ function _buildBackendFilters() {
         if (codes.length) filters.category = [...new Set(codes)].join(',');
     }
 
-    // rank：filterLevel（中文级别）+ statFilters.heritage_level 合并
+    // rank:filterLevel(中文级别) + statFilters.heritage_level 合并。
     const levelVal = (document.getElementById('filterLevel') || {}).value || '';
     const rankCodes = new Set();
     if (levelVal) {
@@ -121,7 +121,7 @@ function _buildBackendFilters() {
     }
     if (rankCodes.size) filters.rank = [...rankCodes].join(',');
 
-    // township：前端乡镇下拉 / 图表联动都存的是中文乡镇名
+    // township:下拉与图表联动均存中文名。
     const twn = (document.getElementById('filterTown') || {}).value || '';
     if (twn) filters.township = twn;
     else if (statFilters && statFilters.township) filters.township = statFilters.township;

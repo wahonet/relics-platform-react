@@ -1,9 +1,10 @@
-"""Step 04 | DOCX 档案 -> 图纸库 + 索引。
+"""Step 04 | DOCX → 图纸库 + 索引。
 
-与 step03 同构,区别是图纸永远出现在档案文档最前,偏移量 = i。
+与 step03 同构,区别在于图纸总是排在 DOCX 图片流最前(偏移 = i)。
+
 输出:
     data/output/drawings/<archive_code>/<archive_code>_<图号>_<名称>.ext
-    data/output/dataset/drawing_index.csv / .json
+    data/output/dataset/drawing_index.{csv,json}
 """
 from __future__ import annotations
 

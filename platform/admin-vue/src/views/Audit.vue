@@ -245,7 +245,7 @@ async function reload() {
   }
 }
 
-// 所有筛选都已下沉到后端；本地仅保留原表行引用，便于以后加入更多细化筛选。
+// 筛选下沉到后端;本地仅保留原表行引用,便于后续扩展细化筛选。
 const filtered = computed<AuditRow[]>(() => rows.value);
 
 watch(
@@ -283,7 +283,7 @@ function computeDiff(row: AuditRow): DiffEntry[] {
       out.push({ k, before: before[k], after: after[k] });
     }
   }
-  // version / updated_at 自然变化，排到末尾
+  // version / updated_at 属于自然变化,排到末尾。
   const noisy = new Set(['version', 'updated_at', 'created_at']);
   out.sort((a, b) => {
     const aN = noisy.has(a.k) ? 1 : 0;
@@ -331,9 +331,9 @@ function showDiff(row: AuditRow) {
 }
 
 function canRollback(row: AuditRow): boolean {
-  // rollback 本身也可以再回滚一步（相当于反向 redo）
+  // rollback 本身也允许再回滚一次(等价于反向 redo)。
   if (!['create', 'update', 'delete', 'rollback'].includes(row.action)) return false;
-  // update / delete / rollback 必须有 before_json 才能还原
+  // update / delete / rollback 需要 before_json 才能还原。
   if (row.action !== 'create' && !row.before_json) return false;
   return true;
 }

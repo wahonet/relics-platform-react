@@ -1,4 +1,4 @@
-// 三维模型查看器：用 iframe 承载 /model-viewer，避免污染主 Cesium 场景。
+// 三维模型查看器:通过 iframe 承载 /model-viewer,避免污染主 Cesium 场景。
 function open3DBox(folder, name, refLat, refLng, refAlt) {
     const box = document.getElementById('model3dBox');
     document.getElementById('m3dTitle').textContent = name + ' — 三维模型';

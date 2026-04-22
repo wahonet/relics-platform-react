@@ -1,7 +1,7 @@
-"""数据管线公共工具:配置加载/路径解析/日志/坐标系。
+"""数据管线公共工具:配置加载 / 路径解析 / 日志 / 坐标系。
 
-所有 step0X 脚本应通过 `from _common import ...` 获取统一入口,
-不要在脚本里再写硬编码路径或重复的坐标系算法。
+所有 stepXX 脚本通过 `from _common import ...` 获取统一入口,
+禁止硬编码路径或在脚本内重复实现坐标变换。
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# Windows 默认 cp936 无法输出部分 Unicode 字符,统一切到 UTF-8
+# Windows 默认 cp936 无法输出部分 Unicode 字符,统一切到 UTF-8。
 for stream_name in ("stdout", "stderr"):
     s = getattr(sys, stream_name, None)
     if s is not None and hasattr(s, "reconfigure"):
@@ -43,16 +43,16 @@ CONFIG_EXAMPLE_PATH: Path = PROJECT_ROOT / "config.example.yaml"
 class Paths:
     root: Path
     input_archives: Path       # DOCX 档案
-    input_worklogs: Path       # 外业工作日志 Excel
+    input_worklogs: Path       # 外业日志 Excel
     input_boundaries: Path     # 行政边界 Shapefile / GeoJSON
     input_dem: Path            # DEM GeoTIFF
     input_models_3d: Path      # 3D Tiles
-    output_markdown: Path      # step01 产物
-    output_dataset: Path       # step02 产物
-    output_photos: Path        # step03 产物
-    output_drawings: Path      # step04 产物
-    output_worklogs: Path      # step05 产物(工作日志 PDF)
-    output_boundaries: Path    # step06 产物(边界 GeoJSON)
+    output_markdown: Path      # step01
+    output_dataset: Path       # step02 / step07
+    output_photos: Path        # step03
+    output_drawings: Path      # step04
+    output_worklogs: Path      # step05 (日志 PDF)
+    output_boundaries: Path    # step06 (WGS-84 GeoJSON)
     output_logs: Path
 
 
@@ -76,7 +76,7 @@ def get_paths() -> Paths:
 
 
 def ensure_data_dirs() -> None:
-    """setup.bat 首次运行时创建全部 data/ 目录。"""
+    """首次运行时创建全部 data/ 目录骨架,供 setup.bat 调用。"""
     p = get_paths()
     for f in p.__dataclass_fields__:
         if f == "root":
@@ -88,7 +88,7 @@ _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def _expand_env(value: Any) -> Any:
-    """递归把字符串里的 ${VAR} 替换成环境变量值;未定义则保留原样。"""
+    """递归展开字符串中的 ${VAR} 为环境变量值;未定义则保留占位。"""
     if isinstance(value, str):
         return _ENV_PATTERN.sub(
             lambda m: os.environ.get(m.group(1), m.group(0)), value
@@ -111,10 +111,10 @@ def load_config(path: Path | str | None = None) -> dict:
     return _expand_env(cfg)
 
 
-# ── 坐标系:GCJ-02 ↔ WGS-84 ───────────────────────────────────
-# 国内四普档案多为 GCJ-02(火星坐标),测绘下发的 shp 也常在 GCJ-02 上
-# 再做高斯克吕格投影。step02 把点位归一到 WGS-84,step06 可选地对
-# 行政边界做同样修正,让两者叠图时不漂移。
+# ── 坐标系:GCJ-02 ↔ WGS-84 ──────────────────────────────────
+# 国内四普档案普遍为 GCJ-02(火星坐标),部分测绘下发的 shp 也在 GCJ-02
+# 基础上再做高斯-克吕格投影。step02 把点位统一到 WGS-84,step06 可选
+# 地对行政边界同样修正,保证叠图不漂移。
 _GCJ_A = 6378245.0
 _GCJ_EE = 0.00669342162296594323
 
@@ -155,8 +155,7 @@ _LOGGERS: dict[str, logging.Logger] = {}
 
 
 def get_logger(step_name: str) -> logging.Logger:
-    """每个 step 一个 logger,文件输出到 data/output/logs/<step>.log,
-    同时镜像到 stdout。"""
+    """每个 step 一个 logger。文件落 `data/output/logs/<step>.log`,同时镜像到 stdout。"""
     if step_name in _LOGGERS:
         return _LOGGERS[step_name]
 
@@ -212,8 +211,7 @@ def _non_empty(d: Path, patterns: tuple[str, ...]) -> bool:
 
 
 def detect_features() -> FeatureStatus:
-    """扫描 data/input 判断哪些功能模块有数据。main.py 的 feature toggle
-    在 auto 模式下依赖此结果。"""
+    """扫描 data/input 判断各功能模块是否有数据,供 auto 模式下的 feature toggle 使用。"""
     p = get_paths()
     return FeatureStatus(
         has_archives=_non_empty(p.input_archives, ("*.docx", "*.DOCX")),
@@ -227,7 +225,7 @@ def detect_features() -> FeatureStatus:
 
 
 def print_status() -> None:
-    """setup.bat / run_pipeline.bat 末尾调用,打印当前项目概览。"""
+    """打印项目概览(setup.bat / run_pipeline.bat 末尾调用)。"""
     print("=" * 60)
     print("  Relics Platform - 项目状态")
     print("=" * 60)

@@ -1,9 +1,9 @@
 import { defineStore } from 'pinia';
 import { adminApi, type CodesResp } from '@/api/admin';
 
-// 后台各页面共用的编码字典
-// 首次调用 ensureLoaded() 时从后端拉一次，之后常驻内存。
-// 这样列表/筛选/编辑对话框都能用 `labelOf('category', '0300')` 取到中文名。
+// 后台各页面共用的编码字典。
+// 首次 ensureLoaded() 从 /api/admin/codes 拉一次后常驻内存,
+// 业务侧可用 `labelOf('category', '0300')` 取中文名。
 interface State {
   loaded: boolean;
   loading: boolean;

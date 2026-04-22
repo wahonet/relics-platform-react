@@ -1,16 +1,14 @@
-"""文物查询相关 API。
+"""文物查询 API。
 
-新接口（推荐使用）：
-    GET /api/relics/by-bbox          视口查询，极简 8 字段，目标 <50ms
-    GET /api/relics/search?q=...     FTS5 全文搜索，返回精简列表
+推荐接口:
+    GET /api/relics/by-bbox      视口查询,极简 8 字段
+    GET /api/relics/search       FTS5 全文搜索
 
-旧接口（deprecated，保留兼容）：
-    GET /api/relics                  全量列表，迁移期保留但会记 warning
-    GET /api/relics/{code}           单条完整详情
-    GET /api/relics/{code}/photos    照片列表
-    GET /api/relics/{code}/drawings  图纸列表
-    GET /api/geojson/points          全量 points geojson
-    GET /api/geojson/polygons        全量 polygons geojson
+兼容接口 (deprecated):
+    GET /api/relics              全量列表
+    GET /api/relics/{code}       单条完整详情
+    GET /api/relics/{code}/photos / drawings / polygon
+    GET /api/geojson/points / polygons
 """
 from __future__ import annotations
 
@@ -37,12 +35,12 @@ async def relics_by_bbox(
     search_type: str | None = Query(None, description="普查来源 2/12/110301"),
     limit: int = Query(2000, ge=1, le=5000),
 ):
-    """视口 + 筛选查询，响应每条只含 8 字段（目标 < 250 字节/条）。
-    bbox 会自动按 15% 缓冲扩展，便于快速拖动时复用缓存。"""
+    """视口 + 筛选查询,每条 8 字段(目标 <250 B)。
+    bbox 自动按 15% 缓冲扩展,便于快速拖动时命中缓存。"""
     if min_lng >= max_lng or min_lat >= max_lat:
         raise HTTPException(400, "bbox 参数无效：min 必须小于 max")
 
-    # 15% buffer 扩展，学四普做法提升体验；超过视口一屏的拖动仍能命中缓存
+    # 15% 缓冲,短距离拖动时仍能命中同一请求。
     dlng = (max_lng - min_lng) * 0.15
     dlat = (max_lat - min_lat) * 0.15
     qmin_lng, qmax_lng = min_lng - dlng, max_lng + dlng
@@ -69,7 +67,6 @@ async def relics_by_bbox(
         content=_dumps({"data": data, "total": len(data), "truncated": truncated}),
         media_type="application/json",
     )
-    # 允许浏览器 / 反代短时缓存；坐标精度 5 位已保证 URL 命中率足够
     response.headers["Cache-Control"] = "public, max-age=30"
     return response
 
@@ -79,8 +76,8 @@ async def relics_search(
     q: str = Query(..., min_length=1, description="搜索关键词"),
     limit: int = Query(20, ge=1, le=200),
 ):
-    """FTS5 全文搜索（trigram tokenizer）。关键词 ≥3 字符走索引，
-    2 字符以内走 LIKE fallback。返回与 by-bbox 相同的 8 字段格式。"""
+    """FTS5 全文搜索(trigram)。关键词 >=3 字走索引,否则 LIKE fallback。
+    返回格式与 by-bbox 一致。"""
     data = store.search_fulltext(q, limit=limit)
     return {"data": data, "total": len(data), "query": q}
 
@@ -88,16 +85,14 @@ async def relics_search(
 # ── 兼容旧接口 ──────────────────────────────────────────────
 @router.get("/relics", deprecated=True)
 async def list_relics():
-    """全部文物精简列表（DEPRECATED）。
-
-    请改用 `/api/relics/by-bbox` 视口查询。迁移期保留用于 admin 老页面。"""
+    """全量精简列表,DEPRECATED。请改用 /api/relics/by-bbox。"""
     log.warning("[deprecated] /api/relics 被调用，请迁移到 /api/relics/by-bbox")
     return store.get_relics_summary()
 
 
 @router.get("/relics/{code}")
 async def get_relic(code: str):
-    """单个文物完整信息（含简介/照片/图纸列表）。"""
+    """单条完整详情(含简介 / 照片 / 图纸)。"""
     relic = store.get_relic_full(code) if store._use_db else store.get_relic(code)
     if not relic:
         raise HTTPException(status_code=404, detail=f"文物 {code} 不存在")
@@ -120,7 +115,7 @@ async def get_relic_drawings(code: str):
 
 @router.get("/relics/{code}/polygon")
 async def get_relic_polygon(code: str):
-    """单条文物的多边形几何（geojson Geometry，不含 feature 壳）。"""
+    """单条多边形几何(GeoJSON Geometry,不含 Feature 外壳)。"""
     geom = store.polygon_of(code)
     if not geom:
         raise HTTPException(404, "此文物无多边形数据")
@@ -139,7 +134,6 @@ async def geojson_polygons():
 
 # ── 工具 ────────────────────────────────────────────────────
 def _dumps(obj) -> bytes:
-    """默认走 stdlib json；byte 输出让 FastAPI Response 直接用，省一次编码。
-    若后续引入 orjson 可在这里替换为 orjson.dumps。"""
+    """直接返回 utf-8 bytes,Response 无需再做一次编码。"""
     import json as _json
     return _json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")

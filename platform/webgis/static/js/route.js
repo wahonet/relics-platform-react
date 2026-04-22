@@ -1,5 +1,5 @@
-// 外业普查路线：按日期分组加载、上色、增量渲染。
-// _surveyRouteData: { "YYYY-MM-DD": [{filename,time,lat,lon}, ...], ... }
+// 外业普查路线:按日期分组加载 / 上色 / 增量渲染。
+// _surveyRouteData 结构: { "YYYY-MM-DD": [{filename, time, lat, lon}, ...] }
 let _surveyRouteData = null;
 let _routeEntities = [];
 let _routeDates = [];
@@ -90,7 +90,7 @@ function _buildRouteDateList() {
         container.appendChild(row);
     });
 
-    // 台账异步到位后，在每个日期行下方补上当天经过的村庄信息。
+    // 台账异步加载完后,在每个日期行下方追加当天经过的村庄。
     if (typeof loadWorklogData === 'function') {
         loadWorklogData().then(() => {
             _routeDates.forEach(date => {
@@ -239,7 +239,7 @@ function flyToRoute(date, offsetForPanel) {
     let east = maxLon + padLon;
 
     if (offsetForPanel) {
-        // 日志面板覆盖屏幕右半，将外接矩形向右扩一份，使路线居中在左半屏。
+        // 日志面板覆盖屏幕右半时,把 bbox 向右扩一份,让路线居中在左半屏。
         const routeWidth = east - west;
         east += routeWidth;
     }
@@ -294,7 +294,7 @@ function closeRoutePopup() {
     if (popup) popup.classList.remove('show');
 }
 
-// 村村达：按村界染色展示已到达/未到达，并列出未到达清单。
+// 村村达:按村界染色展示已到达 / 未到达,并列出未到达清单。
 let _villageCoverageData = null;
 let _villageCoverageEntities = [];
 let _villageCoverageOn = false;

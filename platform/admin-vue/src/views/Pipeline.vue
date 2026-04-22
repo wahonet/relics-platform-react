@@ -135,7 +135,7 @@ let refreshTimer: number | null = null;
 
 onMounted(() => {
   void refresh();
-  // 轮询频率：页面 15s 拉一次总体状态；单任务日志由 TaskLogDrawer 自己 1.5s 轮询
+  // 本页 15s 拉一次总体状态;单任务日志由 TaskLogDrawer 自行 1.5s 轮询。
   refreshTimer = window.setInterval(() => void refresh(), 15_000);
 });
 onBeforeUnmount(() => {
@@ -163,7 +163,7 @@ async function loadTasks() {
   }
 }
 
-// 找出某个 step 正在运行的 task 或最近一个 task（用于高亮按钮、开日志）
+// 找出指定 step 正在运行的任务或最近一次任务,用于按钮高亮与打开日志。
 function isRunning(stepId: string): boolean {
   return tasks.value.some(
     (t) => t.script === stepId && (t.status === 'running' || t.status === 'starting'),

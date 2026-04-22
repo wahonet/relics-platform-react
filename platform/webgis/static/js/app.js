@@ -1,12 +1,12 @@
-// 应用入口：加载数据、绑定交互、启动。
+// 应用入口:加载数据、绑定交互、启动视口查询。
 async function init() {
     try {
-        // 1. 先构建地图点渲染器 + 视口查询管理器（即使全量 fetch 失败也能按视口拉）
+        // 先构建渲染器与视口管理器,确保即便 /api/relics 失败仍可按视口拉取。
         window.pointRenderer = new PointRenderer(viewer);
         window.viewport = new ViewportManager(viewer, window.pointRenderer);
 
-        // 2. 全量拉 /api/relics 作为 filter 下拉/图表/AI 聊天的上下文；
-        //    地图点位不再由此触发渲染，而是由 viewport 按视口增量拉取。
+        // /api/relics 仅作为筛选下拉、图表、AI 聊天的上下文;
+        // 地图点位由 viewport 按视口增量拉取,不再全量渲染。
         const [rResp, sResp] = await Promise.all([
             fetch(API + '/api/relics'), fetch(API + '/api/stats'),
         ]);
@@ -16,8 +16,7 @@ async function init() {
         dimColorMaps[activeGroup] = buildColorMap(allRelics, DIMS.find(d=>d.id===activeGroup));
         populateFilters();
 
-        // 3. filter 计算 filtered/列表/图表（不再渲染地图点），
-        //    地图点由 viewport 的第一次 moveEnd 触发拉取。
+        // filter 只驱动列表 / 图表;点位由 viewport 首次 moveEnd 触发拉取。
         onFilterChange();
         window.viewport.start();
 
@@ -27,7 +26,7 @@ async function init() {
         loadWorklogData();
         document.getElementById('loading').style.display = 'none';
 
-        // 打通后台管理：?relic=code 自动定位；?pick=1 进入拾点模式
+        // 与管理后台的联动:?relic=code 定位、?pick=1 拾点。
         if (window.PickMode && typeof PickMode.handleUrlParams === 'function') {
             PickMode.handleUrlParams();
         }
@@ -39,7 +38,7 @@ async function init() {
 
 function updateBadges(s) {}
 
-// 单击：显示文物/路线点信息；双击：按乡镇或村筛选。
+// 单击:显示文物 / 路线点详情;双击:按乡镇 / 村筛选。
 const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 let _clickTimer = null;
 handler.setInputAction(function (click) {
@@ -48,13 +47,13 @@ handler.setInputAction(function (click) {
         const picked = viewer.scene.pick(click.position);
         if (!Cesium.defined(picked)) return;
 
-        // 1. PointPrimitive（新的高性能渲染路径）：picked.id 是 {_type:'relic',code,...}
+        // 新的高性能 PointPrimitive 路径,picked.id = {_type:'relic', code, ...}
         if (picked.id && picked.id._type === 'relic' && picked.id.code) {
             showInfoByCode(picked.id.code);
             return;
         }
 
-        // 2. 旧 Entity 路径：路线点 / 行政边界双击筛选 / 遗留 Billboard
+        // 旧 Entity 路径:路线点 / 行政边界 / 遗留 Billboard。
         if (picked.id && picked.id.properties) {
             const r = {};
             picked.id.properties.propertyNames.forEach(n => { r[n] = picked.id.properties[n].getValue(); });
@@ -90,7 +89,7 @@ handler.setInputAction(function (click) {
     }
 }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
 
-// ESC：优先关闭 3D/PDF 弹窗，否则整体重置。
+// ESC 快捷键:优先关闭 3D / PDF 弹窗,否则整体重置。
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         const m3d = document.getElementById('model3dBox');
@@ -105,7 +104,7 @@ document.addEventListener('keydown', function(e) {
     }
 });
 
-// 移动端行为通过事件总线订阅，原函数不再被 monkey-patch。
+// 移动端行为通过事件总线订阅,替代原先的 monkey-patch。
 (function _initMobileBus() {
     if (!window.Bus) return;
 

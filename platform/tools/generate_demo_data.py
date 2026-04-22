@@ -1,22 +1,12 @@
-"""一键生成公开演示数据集，用于替换掉 data/output/ 下的涉密真实数据。
+"""一键生成公开演示数据集,用于替换 `data/output/` 下的真实数据。
 
-产物完全虚构：
-- 1 个虚构县（演示县，国标代码 990101）
-- 1 个虚构街道（示范街道）、8 个虚构村（V01村 ~ V08村）
-- 15 处虚构不可移动文物
-- 坐标全部落在一个完全虚构的矩形内（lng 120.00~120.20, lat 30.00~30.20）
-- 所有人名用"调查员A/审核员A/摄影师A"等角色代号
-- 档案编号保留"6 位数字-4 位序号"格式，但用不存在的 990101- 前缀
+产物完全虚构:
+- 1 个演示县(990101)、1 个示范街道、8 个虚构村
+- 15 处不可移动文物,坐标落在 120.00~120.20E × 30.00~30.20N
+- 所有人名均为角色代号("调查员A"等);档案编号使用 990101- 前缀
 
-覆盖文件：
-- data/output/markdown/01示范街道/990101-XXXX_*.md
-- data/output/dataset/relics_master.csv / relics_full.json
-- data/output/dataset/relics_points.geojson / relics_polygons.geojson
-- data/output/dataset/by_township/示范街道.{csv,json}
-- data/output/dataset/category_stats.csv / township_stats.csv / high_risk_relics.csv
-- data/output/boundaries/county.geojson / townships.geojson / villages.geojson
-
-使用方法：直接运行 `python platform/tools/generate_demo_data.py`。
+生成文件覆盖 markdown/dataset/boundaries 三大目录。
+用法: `python platform/tools/generate_demo_data.py`。
 """
 from __future__ import annotations
 
@@ -37,7 +27,7 @@ BOUNDARIES_DIR = DATA_OUTPUT / "boundaries"
 LOGS_DIR = DATA_OUTPUT / "logs"
 
 # ── 配置 ────────────────────────────────────────────────────
-# 用固定 seed 保证每次生成结果一致，便于复跑
+# 固定 seed,保证复跑结果一致。
 random.seed(20260421)
 
 PROVINCE = "示范省"
@@ -51,7 +41,7 @@ TOWNSHIP_CODE = "99010100"
 WEST, SOUTH = 120.000, 30.000
 EAST, NORTH = 120.200, 30.200
 
-# 8 个村按 4 列 x 2 行网格切分街道范围
+# 8 个村按 4×2 网格切分街道范围。
 VILLAGES = [
     {"name": "V01村", "col": 0, "row": 1},
     {"name": "V02村", "col": 1, "row": 1},
@@ -73,7 +63,7 @@ def village_bbox(v: dict) -> tuple[float, float, float, float]:
     return w, s, w + COL_W, s + ROW_H
 
 
-# ── 文物清单（15 条，覆盖六大类与不同保护级别） ─────────────
+# ── 文物清单(15 条,覆盖六大类与不同保护级别) ───────────────
 RELICS = [
     # (seq, village, sub_name, category_main, category_sub, era, era_stats, level, condition, area_m2, has_poly)
     ("0001", "V01村", "古窑址", "古遗址", "古窑址", "汉", "战汉", "", "较好", 360, True),
@@ -95,7 +85,7 @@ RELICS = [
 
 DEFAULT_LEVEL = "尚未核定公布为文物保护单位的不可移动文物"
 
-# 虚构人员（全部角色代号）
+# 虚构人员,统一使用角色代号。
 SURVEYORS = ["调查员A", "调查员B", "调查员C", "调查员D", "调查员E"]
 REVIEWER = "审核员A"
 PHOTOGRAPHER = "摄影师A"
@@ -129,7 +119,7 @@ REMARK_TEMPLATE = (
     "仅用于公开演示，不具备档案学意义。"
 )
 
-# 影响因素按类别选择
+# 影响因素按保存现状选择。
 RISK_FACTORS_POOL = {
     "好": "",
     "较好": "雨雪",
@@ -150,7 +140,7 @@ OWNERSHIP_BY_CAT = {
 
 # ── 坐标工具 ────────────────────────────────────────────────
 def decimal_to_dms(value: float) -> str:
-    """十进制度 -> 度°分′秒″ 字符串，四舍五入到 4 位小数秒。"""
+    """十进制度 → 度°分′秒″,秒保留 4 位小数。"""
     deg = int(value)
     remainder = (value - deg) * 60
     minute = int(remainder)
@@ -165,19 +155,18 @@ def random_point_in(w: float, s: float, e: float, n: float, pad: float = 0.005) 
 
 
 def build_polygon_around(center_lng: float, center_lat: float, area_m2: float) -> list[tuple[float, float]]:
-    """根据面积估算一个近似正方形多边形边长，返回 4 个角点。
-    粗略换算：1° ≈ 111 km，在 30°N 附近 1° 经度约 96 km。
-    """
+    """根据面积估算近似正方形的 4 个角点。
+    粗略换算:1° 纬度 ≈ 111 km,30°N 附近 1° 经度 ≈ 96 km。"""
     side_m = max(area_m2, 16) ** 0.5
     d_lat = side_m / 111320.0
     d_lng = side_m / 96600.0
     dx = d_lng / 2
     dy = d_lat / 2
     return [
-        (round(center_lng - dx, 8), round(center_lat - dy, 8)),  # 西南
-        (round(center_lng + dx, 8), round(center_lat - dy, 8)),  # 东南
-        (round(center_lng + dx, 8), round(center_lat + dy, 8)),  # 东北
-        (round(center_lng - dx, 8), round(center_lat + dy, 8)),  # 西北
+        (round(center_lng - dx, 8), round(center_lat - dy, 8)),
+        (round(center_lng + dx, 8), round(center_lat - dy, 8)),
+        (round(center_lng + dx, 8), round(center_lat + dy, 8)),
+        (round(center_lng - dx, 8), round(center_lat + dy, 8)),
     ]
 
 
@@ -218,10 +207,10 @@ def build_records() -> list[dict]:
         review_date = f"2025.{random.randint(1, 6):02d}.{random.randint(1, 28):02d}"
 
         risk_factors = RISK_FACTORS_POOL[cond]
-        # 随机给一半条目补充已完成保护措施
+        # 约半数条目有保护措施,制造差异化样本。
         prot_measures = random.choice(["", "", "围栏", "说明牌", "围栏、说明牌"])
 
-        # 按 step02 里的算法计算 risk_score
+        # 风险评分与 step02 保持一致。
         risk_map = {"差": 5, "较差": 4, "一般": 2, "较好": 1, "好": 0}
         risk_score = risk_map.get(cond, 0)
         if not prot_measures:
@@ -685,7 +674,7 @@ def build_rect_polygon(w: float, s: float, e: float, n: float) -> list[list[floa
 def write_boundaries() -> None:
     BOUNDARIES_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 县边界：比街道稍大
+    # 县边界:略大于街道。
     cw, cs, ce, cn = WEST - 0.01, SOUTH - 0.01, EAST + 0.01, NORTH + 0.01
     county_fc = {
         "type": "FeatureCollection",
@@ -705,7 +694,7 @@ def write_boundaries() -> None:
         json.dumps(county_fc, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    # 街道（整个 demo 矩形）
+    # 街道:整个 demo 矩形。
     township_fc = {
         "type": "FeatureCollection",
         "features": [{
@@ -724,7 +713,7 @@ def write_boundaries() -> None:
         json.dumps(township_fc, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    # 村边界：8 个网格，data_loader 读 ZLDWMC + _township 字段
+    # 村边界:8 个网格,data_loader 依赖 ZLDWMC + _township 字段。
     village_features = []
     for i, v in enumerate(VILLAGES, start=1):
         vw, vs, ve, vn = village_bbox(v)
@@ -748,7 +737,7 @@ def write_boundaries() -> None:
 
 # ── 主流程 ──────────────────────────────────────────────────
 def clean_previous_output() -> None:
-    """删除 data/output/ 下所有 step02/06 产物，但保留目录结构。"""
+    """清空 data/output/ 下的 step02 / step06 产物,保留目录骨架。"""
     targets = [
         DATA_OUTPUT / "markdown",
         DATASET_DIR,

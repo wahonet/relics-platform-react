@@ -1,4 +1,4 @@
-// 前端常量与统计维度定义。CENTER 从后端注入的 __PLATFORM_CONFIG 取，缺省时退回示例县。
+// 前端常量与统计维度定义。CENTER 来自后端注入的 __PLATFORM_CONFIG,缺省时回退示例县。
 const API = '';
 const _PC = window.__PLATFORM_CONFIG || {};
 const _PC_CENTER = (_PC.geo && _PC.geo.center) || {};

@@ -1,10 +1,10 @@
-// 信息面板：基本信息 / 照片 / 图纸 / 简介 四个页签。
+// 文物信息面板:基本信息 / 照片 / 图纸 / 简介 四个页签。
 let _currentInfoRelic = null;
 
-// 按编号拉完整记录再展示：给 PointPrimitive 点击用（视口里不再有 Entity.properties）
+// 按 code 拉完整记录。PointPrimitive 点击后调用此函数(视口路径不再挂 Entity.properties)。
 async function showInfoByCode(code) {
     if (!code) return;
-    // 先从内存里找（allRelics 是 JSON 模式的兼容快照），避免多一次网络
+    // 先命中内存快照,避免多一次请求。
     const cached = (window.allRelics || []).find(r => r.archive_code === code);
     if (cached) { showInfo(cached); return; }
     try {

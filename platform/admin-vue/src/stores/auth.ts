@@ -1,10 +1,8 @@
 import { defineStore } from 'pinia';
 
-// FastAPI 用 httponly cookie 做登录态，前端拿不到 cookie 值。
-// 这里仅用 localStorage 记一个软标记：
-//   - 登录成功后设 true，用户名留给 UI 显示
-//   - 401 时拦截器清掉，路由守卫看到就跳登录
-// 真实鉴权仍以 cookie 为准。
+// FastAPI 以 httponly cookie 为鉴权;前端读不到 cookie 值,
+// 这里用 localStorage 做一个"是否登录"的软标记,供路由守卫与 UI 显示用户名。
+// 真正的鉴权仍由 cookie 决定。
 const LS_KEY = 'relics_admin_auth';
 
 interface Persisted {

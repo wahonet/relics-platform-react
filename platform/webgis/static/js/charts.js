@@ -1,4 +1,4 @@
-// ECharts 仪表盘：各维度饼图/柱图/雷达等，点击图形等同于追加统计筛选。
+// ECharts 仪表盘:各维度饼图 / 柱图 / 雷达等,点击图形追加统计筛选。
 const _charts = {};
 const _tt = { backgroundColor:'rgba(13,17,23,.95)', borderColor:'rgba(88,166,255,.3)', textStyle:{color:'#e6edf3',fontSize:11} };
 

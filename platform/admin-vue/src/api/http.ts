@@ -6,10 +6,10 @@ import axios, {
 } from 'axios';
 import { ElMessage } from 'element-plus';
 
-// 统一 HTTP 客户端
-// - 开发期：Vite 代理 /api /admin 到 FastAPI，cookie 同源
-// - 生产期：部署在同一域名下的 /admin-ui/，本身就同源
-// - 鉴权：FastAPI 用 httponly cookie，`withCredentials: true` 必须开
+// 统一 HTTP 客户端。
+// 开发: Vite 代理 /api 到 FastAPI,cookie 同源。
+// 生产: 挂在同域的 /admin-ui/ 下,本身就同源。
+// 鉴权: FastAPI 使用 httponly cookie,必须开 `withCredentials: true`。
 const http: AxiosInstance = axios.create({
   baseURL: '/',
   timeout: 30_000,
@@ -19,9 +19,7 @@ const http: AxiosInstance = axios.create({
   },
 });
 
-// 响应拦截：
-// - 401 → 清登录态并跳 /admin-ui/login
-// - 4xx/5xx → 提示服务端返回的 detail，且把 error 继续抛给业务层
+// 响应拦截:401 清登录态并跳 /login;其它 4xx/5xx 提示 detail 并继续抛出。
 http.interceptors.response.use(
   (res: AxiosResponse) => res,
   (error: AxiosError<{ detail?: string }>) => {
@@ -32,7 +30,7 @@ http.interceptors.response.use(
       import('@/stores/auth').then(({ useAuthStore }) => {
         useAuthStore().clear();
       });
-      // 避免登录页自己 401 再跳一次
+      // 登录页自身 401 不再重复跳转。
       const path = window.location.hash.replace('#', '');
       if (!path.startsWith('/login')) {
         window.location.hash = '#/login';

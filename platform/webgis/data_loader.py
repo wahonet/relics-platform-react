@@ -1,13 +1,12 @@
-"""全局数据容器。迁移期并存策略：
+"""全局数据容器 (Repository)。
 
-- 启动时优先检测 `data/output/dataset/relics.db`，存在则走 SQLite 模式
-  （通过 Repository 方法查询），同时把完整文物记录缓存到 `self.relics`
-  以保持与旧路由（`/api/relics`、`/api/stats`、admin 等）的兼容。
-- DB 不存在时回退到老的 JSON 加载路径（完全兼容旧部署）。
-- 新路由应优先使用 `store.query_bbox()` / `store.search_fulltext()`，
-  只在需要全量时才用 `store.relics`。
+启动时检测 `data/output/dataset/relics.db`:存在则走 SQLite 模式,同时把全量记录
+缓存到 `self.relics` 以兼容旧路由;不存在则回退 JSON 模式(全量内存)。
 
-对外接口保持向后兼容：
+新路由优先使用 `store.query_bbox()` / `store.search_fulltext()`,
+仅在需要全量时才使用 `store.relics`。
+
+向后兼容接口：
     store.relics / store.relics_map
     store.photo_index / store.photo_map
     store.drawing_index / store.drawing_map
@@ -17,11 +16,11 @@
     store.load() / store.get_relic() / store.get_photos() / store.get_drawings()
     store.get_relics_summary() / store.compute_stats()
 
-新增接口（仅 DB 模式有效）：
-    store.query_bbox(...)           视口查询，返回极简 8 字段
-    store.search_fulltext(...)      FTS5 全文搜索
-    store.get_relic_full(code)      单条文物完整详情（含 extra_json 合并）
-    store.polygon_of(code)          单条文物的多边形 geojson 几何
+DB 模式专用接口：
+    store.query_bbox(...)        视口查询(极简 8 字段)
+    store.search_fulltext(...)   FTS5 全文搜索
+    store.get_relic_full(code)   单条完整详情(含 extra_json 合并)
+    store.polygon_of(code)       单条多边形几何
 """
 from __future__ import annotations
 
@@ -37,7 +36,7 @@ from typing import Iterable, Optional
 
 log = logging.getLogger("uvicorn.error")
 
-# 让 codes.py 能被找到；webgis 已把 scripts/ 加到 sys.path，这里再兜底一次
+# 兜底一次 scripts/ 路径,避免单测直接 import data_loader 时找不到 codes.py。
 _SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
@@ -47,8 +46,8 @@ from codes import CATEGORY_CODES, RANK_CODES, SEARCH_TYPE_CODES  # noqa: E402
 
 # ── DB 行 → 旧 relic 字典 ─────────────────────────────────────
 def _row_to_legacy(row: sqlite3.Row, extra: dict) -> dict:
-    """DB 记录反向映射为老的文物字典格式（`archive_code/category_main/...`），
-    用于兼容只认旧字段的路由和前端代码。"""
+    """DB 行反向映射为旧字典格式(archive_code / category_main / ...),
+    供仅认旧字段的路由与前端代码使用。"""
     d = dict(extra) if extra else {}
     d.update({
         "archive_code": row["code"],
@@ -69,7 +68,6 @@ def _row_to_legacy(row: sqlite3.Row, extra: dict) -> dict:
         "photo_count": row["photo_count"] or 0,
         "drawing_count": row["drawing_count"] or 0,
         "intro": row["brief"] or "",
-        # 前端有时用它，给个兼容
         "_cat_code": row["category"],
         "_rank_code": row["rank"],
         "_version": row["version"] if "version" in row.keys() else 1,
@@ -78,8 +76,8 @@ def _row_to_legacy(row: sqlite3.Row, extra: dict) -> dict:
 
 
 class DataStore:
-    """全局数据容器。支持 SQLite (推荐) 与 JSON (fallback) 两种后端。
-    `_use_db=True` 时所有查询走 DB；`self.relics` 仍会被填充以兼容旧接口。"""
+    """SQLite (推荐) / JSON (fallback) 双模式的数据容器。
+    `_use_db=True` 时查询走 DB,`self.relics` 仍会被填充以兼容旧接口。"""
 
     def __init__(self) -> None:
         self.relics: list[dict] = []
@@ -96,10 +94,9 @@ class DataStore:
         self.village_coverage: dict = {}
         self._bounds: Optional[tuple[float, float, float, float]] = None
 
-        # ── DB 相关 ────────────────────────────────────────
         self._use_db: bool = False
         self._db_path: Optional[Path] = None
-        # 主连接在 lifespan 启动时打开，路由里按需通过 _thread_conn 拿到当前线程连接
+        # 主连接在 lifespan 启动时打开;路由线程按需通过 _thread_conn() 获取各自连接。
         self._db: Optional[sqlite3.Connection] = None
         self._tls = threading.local()
 
@@ -113,8 +110,7 @@ class DataStore:
         survey_gps_csv: str | Path = "",
         bounds: Optional[tuple[float, float, float, float]] = None,
     ) -> None:
-        """一次性加载全部数据源。如果 `dataset_dir/relics.db` 存在则
-        走 DB 模式，否则回退到 JSON 加载（兼容旧部署）。"""
+        """一次性加载所有数据源。检测到 relics.db 则用 DB 模式,否则回退 JSON。"""
         dp = Path(dataset_dir)
         self._bounds = bounds
 
@@ -125,12 +121,11 @@ class DataStore:
         else:
             log.warning("[数据] 未找到 relics.db，回退 JSON 模式。建议运行 step07_build_db.py")
 
-        # PDF 索引：DB 没存全文件名列表，仍靠扫目录获得
+        # PDF 文件名列表未入库,仍通过扫目录获得。
         if pdf_dir:
             self._load_pdf_index(Path(pdf_dir))
 
         if self._use_db:
-            # DB 模式下仍把全量 relics 填入内存兼容旧接口
             self._populate_legacy_from_db()
             self._load_geojson(dp)
             self._load_township_stats(dp / "township_stats.csv")
@@ -151,12 +146,11 @@ class DataStore:
     def _open_db(self, db_path: Path) -> None:
         self._db_path = db_path
         self._use_db = True
-        # 主连接：启动时打开一次，用于同步的初始化工作。
-        # 路由里按请求/线程取连接，走 _thread_conn。
+        # 启动阶段用的主连接,仅做一次性初始化;请求路径走 _thread_conn()。
         conn = sqlite3.connect(
             str(db_path),
             check_same_thread=False,
-            isolation_level=None,  # autocommit，事务手动 BEGIN/COMMIT
+            isolation_level=None,  # autocommit,事务由代码 BEGIN/COMMIT 管理
         )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL;")
@@ -165,7 +159,7 @@ class DataStore:
         self._db = conn
 
     def _thread_conn(self) -> sqlite3.Connection:
-        """每线程一个连接，避免跨线程共享 sqlite3 cursor 的问题。"""
+        """每线程独立连接,规避 sqlite3 cursor 跨线程共享问题。"""
         if not self._db_path:
             raise RuntimeError("DB 未开启")
         c = getattr(self._tls, "conn", None)
@@ -179,8 +173,8 @@ class DataStore:
 
     # ── DB 模式初始化 ────────────────────────────────────────
     def _populate_legacy_from_db(self) -> None:
-        """把 DB 里所有文物读出来，填到 self.relics / self.relics_map /
-        self.photo_map / self.drawing_map，保证旧接口零改动工作。"""
+        """把 DB 全量读到 self.relics / relics_map / photo_map / drawing_map,
+        供旧接口继续使用。"""
         assert self._db is not None
         self.relics.clear()
         self.relics_map.clear()
@@ -197,7 +191,6 @@ class DataStore:
                 except json.JSONDecodeError:
                     pass
             d = _row_to_legacy(row, extra)
-            # 让 pdf_map 的 has_pdf 标记能反馈到这里
             if self.pdf_map.get(row["code"]):
                 d["has_pdf"] = True
                 d["pdf_path"] = self.pdf_map[row["code"]]
@@ -436,7 +429,7 @@ class DataStore:
         return self.drawing_map.get(code, [])
 
     def get_relics_summary(self) -> list[dict]:
-        """返回不含简介/边界点的精简列表,用于地图打点和列表渲染。"""
+        """不含简介/边界点的精简列表,用于地图打点与列表渲染。"""
         fields = [
             "archive_code", "name", "category_main", "category_sub",
             "era", "era_stats", "heritage_level", "township", "address",
@@ -498,9 +491,11 @@ class DataStore:
         search_type: Optional[str] = None,
         limit: int = 2000,
     ) -> list[dict]:
-        """视口 + 筛选查询，返回极简 8 字段格式（id/name/code/lng/lat/category/rank/has_3d）。
-        bbox 由调用方负责 buffer 扩展（见 routers/relics.py）。
-        `categories`/`ranks` 支持多选，传 None 或空表示不筛选。"""
+        """视口 + 多条件筛选。返回 id/name/code/lng/lat/category/rank/has_3d 8 字段。
+
+        bbox 的 buffer 扩展由调用方处理(见 routers/relics.py);
+        categories/ranks 支持多选,None 或空值表示不筛选。
+        """
         if not self._use_db:
             return self._query_bbox_memory(min_lng, min_lat, max_lng, max_lat,
                                             categories=categories, ranks=ranks,
@@ -558,8 +553,7 @@ class DataStore:
         self, min_lng, min_lat, max_lng, max_lat,
         *, categories, ranks, township, search_type, limit,
     ) -> list[dict]:
-        """JSON 模式下的视口查询：全量遍历内存列表。仅作 fallback，
-        性能无法应对 5 万条目标；建议尽快迁移到 DB 模式。"""
+        """JSON 模式下的视口查询 fallback。全量遍历,性能仅足以支撑千条级。"""
         from codes import normalize_category, normalize_rank, normalize_search_type
 
         rank_set = {str(v) for v in ranks} if ranks else None
@@ -602,9 +596,8 @@ class DataStore:
         return out
 
     def search_fulltext(self, keyword: str, limit: int = 20) -> list[dict]:
-        """FTS5 全文搜索。返回与 query_bbox 相同的 8 字段格式。
-        - 关键词长度 >= 3：走 FTS5 trigram
-        - 关键词长度 < 3：走 name LIKE fallback（保证短词也能用）"""
+        """FTS5 全文搜索,返回格式同 query_bbox。
+        关键词 >= 3 字走 FTS5 trigram,< 3 字回退 LIKE。"""
         kw = (keyword or "").strip()
         if not kw:
             return []
@@ -622,7 +615,7 @@ class DataStore:
                 "WHERE f.relics_fts MATCH ? AND r.status = 1 "
                 "LIMIT ?"
             )
-            # FTS5 MATCH 会把关键词按 trigram 切分，"-/双引号" 等需要转义
+            # FTS5 MATCH 会按 trigram 切分,双引号需要转义。
             safe_kw = kw.replace('"', '""')
             rows = conn.execute(sql, (f'"{safe_kw}"', int(limit))).fetchall()
         else:
@@ -643,7 +636,7 @@ class DataStore:
         ]
 
     def _peek_memory(self, kw: str, limit: int) -> list[dict]:
-        """JSON fallback：遍历 self.relics 按 name contains 过滤。"""
+        """JSON fallback:按 name 子串过滤。"""
         out = []
         for r in self.relics:
             if kw in (r.get("name") or ""):
@@ -660,7 +653,7 @@ class DataStore:
 
     @lru_cache(maxsize=1024)
     def get_relic_full(self, code: str) -> Optional[dict]:
-        """单条文物完整详情，含 extra_json 合并。DB 模式走 DB，否则走内存。"""
+        """单条完整详情,合并 extra_json。DB 模式走 DB,否则走内存。"""
         if self._use_db:
             conn = self._thread_conn()
             row = conn.execute(
@@ -684,7 +677,7 @@ class DataStore:
         return self.relics_map.get(code)
 
     def polygon_of(self, code: str) -> Optional[dict]:
-        """单条文物的多边形几何 geojson。仅 DB 模式有效。"""
+        """单条文物的多边形几何 (GeoJSON),仅 DB 模式有效。"""
         if not self._use_db:
             return None
         conn = self._thread_conn()
@@ -698,11 +691,11 @@ class DataStore:
         except json.JSONDecodeError:
             return None
 
-    # ── 写入接口（Admin）─────────────────────────────────────
-    # 乐观锁：每次 UPDATE 必须匹配 expected_version，成功后 version += 1。
-    # 所有写操作都落审计表 audit_log，记录 before_json / after_json 便于回溯。
+    # ── 写入接口 (Admin) ─────────────────────────────────────
+    # 乐观锁:UPDATE 必须匹配 expected_version,成功后 version += 1。
+    # 所有写操作落 audit_log,记录 before_json / after_json 以便回溯。
 
-    # 允许通过 admin 写入的主表字段（白名单：避免 SQL 注入通过列名）
+    # 允许通过 admin 写入的列白名单(防止通过列名注入)。
     _WRITABLE = {
         "name", "category", "rank", "search_type",
         "lng", "lat", "alt", "township", "village", "address",
@@ -736,7 +729,7 @@ class DataStore:
     def _rtree_upsert(
         self, conn: sqlite3.Connection, relic_id: str, lng: float, lat: float,
     ) -> None:
-        """将文物的 bbox 点同步到 R-Tree 与桥接表。"""
+        """同步 (lng, lat) 到 R-Tree 与桥接表。"""
         row = conn.execute(
             "SELECT id_int FROM relics_rtree_map WHERE relic_id = ?", (relic_id,)
         ).fetchone()
@@ -747,7 +740,7 @@ class DataStore:
                 (lng, lng, lat, lat, id_int),
             )
         else:
-            # 用 rowid 占位：插入到 R-Tree 得到 id_int，再写桥接
+            # 新记录:先插 R-Tree 获取 id_int,再写桥接表。
             cur = conn.execute(
                 "INSERT INTO relics_rtree (min_lng, max_lng, min_lat, max_lat) VALUES (?, ?, ?, ?)",
                 (lng, lng, lat, lat),
@@ -774,8 +767,8 @@ class DataStore:
         )
 
     def create_relic(self, payload: dict, *, actor: str = "") -> dict:
-        """创建一条文物。payload 需包含 code/name/category/rank/lng/lat。
-        成功返回创建后的完整记录；若 code 重复抛 ValueError。"""
+        """创建文物。payload 需包含 code/name/category/rank/lng/lat。
+        成功返回完整记录;code 重复抛 ValueError。"""
         if not self._use_db:
             raise RuntimeError("create_relic 仅在 DB 模式可用")
         import time
@@ -845,15 +838,14 @@ class DataStore:
         except Exception:
             conn.execute("ROLLBACK")
             raise
-        # 让内存兼容视图也立即反映新增
         self._populate_legacy_from_db()
         return after
 
     def update_relic(
         self, code: str, patch: dict, *, expected_version: int, actor: str = "",
     ) -> dict:
-        """乐观锁更新。expected_version 不匹配时抛 ValueError("VERSION_CONFLICT")。
-        `patch` 只能包含 `_WRITABLE` 里的字段，其它键被忽略。"""
+        """乐观锁更新。expected_version 不匹配抛 ValueError("VERSION_CONFLICT")。
+        patch 仅保留 `_WRITABLE` 里的字段,其它忽略。"""
         if not self._use_db:
             raise RuntimeError("update_relic 仅在 DB 模式可用")
         import time
@@ -890,11 +882,10 @@ class DataStore:
                 params,
             )
             if cur.rowcount != 1:
-                # 通常是被其他线程抢先更新，版本号不一致
+                # 被其它线程先行更新,版本号对不上。
                 conn.execute("ROLLBACK")
                 raise ValueError("VERSION_CONFLICT")
             row = conn.execute("SELECT * FROM relics WHERE code = ?", (code,)).fetchone()
-            # 同步 R-Tree / FTS
             if ("lng" in patch) or ("lat" in patch):
                 self._rtree_upsert(conn, row["id"], row["lng"], row["lat"])
             if any(k in patch for k in ("name", "brief", "era", "township", "village")):
@@ -915,7 +906,7 @@ class DataStore:
         return after
 
     def delete_relic(self, code: str, *, actor: str = "") -> None:
-        """软删除：status 置 -1，版本号递增。保留主键与空间/FTS 索引以便恢复。"""
+        """软删除:status=-1 且 version++;主键与空间/FTS 索引保留以便恢复。"""
         if not self._use_db:
             raise RuntimeError("delete_relic 仅在 DB 模式可用")
         import time
@@ -951,14 +942,13 @@ class DataStore:
         start_ts: Optional[int] = None,
         end_ts: Optional[int] = None,
     ) -> list[dict]:
-        """读取审计日志，最近的在前。
+        """读取审计日志,最近在前。
 
-        支持多条件筛选：
-        - code: 精确匹配 relic_code
-        - actions: 限定 action 集合（create/update/delete/rollback）
-        - actor: actor LIKE %x%
-        - field: 判定 before_json/after_json 中是否出现该字段（LIKE `%"field":%`）
-        - start_ts / end_ts: 时间戳区间（秒）
+        - code: 精确匹配
+        - actions: create/update/delete/rollback 任意子集
+        - actor: LIKE %actor%
+        - field: 判定 before/after_json 是否出现该字段 (LIKE `%"field":%`)
+        - start_ts / end_ts: 秒级时间戳区间
         """
         if not self._use_db:
             return []
@@ -975,7 +965,7 @@ class DataStore:
         if actor:
             where.append("actor LIKE ?"); params.append(f"%{actor}%")
         if field:
-            # 匹配 JSON 字段 key（before 或 after 任一出现即命中）
+            # before/after 任一出现该字段即命中。
             pat = f'%"{field}":%'
             where.append("(before_json LIKE ? OR after_json LIKE ?)")
             params.extend([pat, pat])
@@ -991,13 +981,13 @@ class DataStore:
         return [self._row_to_dict(r) for r in rows]
 
     def rollback_audit(self, audit_id: int, *, actor: str = "") -> dict:
-        """按审计记录回滚：
-        - action=update：用 before_json 覆写当前值（当 _WRITABLE 白名单内）
-        - action=delete：用 before_json 恢复（包含 status=before.status）
-        - action=create：等价于再次软删当前文物
+        """按审计记录回滚:
+        - update:  用 before_json 覆写(仅 _WRITABLE 字段)
+        - delete:  用 before_json 恢复(含 status)
+        - create:  等价于软删当前文物
 
-        会以当前版本号做乐观锁；若文物已被彻底删除则拒绝。
-        额外写一条 audit，action=rollback，标明 target=<audit_id>。
+        走当前版本号做乐观锁;若记录已被彻底删除则拒绝。
+        本次回滚本身也落一条 action=rollback 的审计。
         """
         if not self._use_db:
             raise RuntimeError("rollback_audit 仅在 DB 模式可用")
@@ -1018,7 +1008,7 @@ class DataStore:
         stamp = f"{actor or ''} [{tag}]".strip()
 
         if action == "create":
-            # 回滚 create = 软删
+            # 回滚新建 = 软删。
             self.delete_relic(code, actor=stamp)
             return {"ok": True, "action_taken": "delete", "code": code}
 
@@ -1046,11 +1036,8 @@ class DataStore:
         radius_m: float = 2000.0,
         limit: int = 20,
     ) -> list[dict]:
-        """返回文物 `code` 附近 radius_m 米内的其它文物（按距离升序）。
-
-        - 排除自己与软删除
-        - 粗筛用 bbox（度数换算），精算用 haversine
-        """
+        """radius_m 米内的其它文物,按距离升序。
+        排除自身与软删除;bbox 粗筛 + haversine 精算。"""
         if not self._use_db:
             return []
         import math
@@ -1061,7 +1048,7 @@ class DataStore:
         if not me or me["lng"] is None or me["lat"] is None:
             return []
         lng0 = float(me["lng"]); lat0 = float(me["lat"])
-        # 度数边距：1° lat ≈ 111km
+        # 1° lat ≈ 111 km,用度数粗算 bbox 边距。
         dlat = radius_m / 111_000.0
         dlng = radius_m / (111_000.0 * max(math.cos(math.radians(lat0)), 0.01))
         rows = conn.execute(
@@ -1119,11 +1106,11 @@ class DataStore:
     ) -> dict:
         """后台分页列表。返回 {data, total, page, size}。
 
-        `search` 同时匹配 code 前缀和 name 子串；
-        `status` 默认（None）返回 status >= 0 的正常/草稿条目，不含软删除。
+        search 同时匹配 code 前缀与 name 子串;
+        status=None 返回 status>=0(正常 + 草稿),不含软删除。
         """
         if not self._use_db:
-            # JSON 模式下没 DB，只能用内存 relics 做一次简单分页
+            # JSON 模式,仅内存列表分页。
             return self._admin_list_legacy(
                 page=page, size=size, search=search,
                 categories=categories, ranks=ranks,
@@ -1236,7 +1223,7 @@ class DataStore:
         self, *, page, size, search, categories, ranks,
         township, search_type,
     ) -> dict:
-        """JSON 模式下的简易分页，性能只够 demo。"""
+        """JSON 模式下的简易分页,仅适用于小规模 demo。"""
         from codes import normalize_category, normalize_rank, normalize_search_type
         rank_set = {str(v) for v in ranks} if ranks else None
         cat_set = {str(v) for v in categories} if categories else None
@@ -1294,11 +1281,10 @@ class DataStore:
         *,
         actor: str = "",
     ) -> dict:
-        """对多条文物同字段批量更新；对每条各自读 version + 写回，
-        乐观锁冲突 / 不存在 / 其它异常都单独记录，不打断整批。
+        """批量同字段更新。每条独立读版本 → 写回,冲突/缺失/异常逐条记录不中断。
 
-        支持字段受 `_WRITABLE` 约束；空 patch 会抛 ValueError。
-        返回：{ updated, not_found:[code…], failed:[{code,error}…] }。
+        字段受 `_WRITABLE` 约束;空 patch 抛 ValueError。
+        返回 {updated, not_found:[...], failed:[{code,error}...]}。
         """
         if not self._use_db:
             raise RuntimeError("admin_bulk_update 仅在 DB 模式可用")
@@ -1328,14 +1314,14 @@ class DataStore:
                 updated += 1
             except ValueError as e:
                 failed.append({"code": code, "error": str(e)})
-            except Exception as e:  # pragma: no cover - 兜底
+            except Exception as e:  # pragma: no cover
                 failed.append({"code": code, "error": str(e)})
         return {"updated": updated, "not_found": not_found, "failed": failed}
 
     def admin_bulk_delete(
         self, codes: Iterable[str], *, actor: str = "",
     ) -> dict:
-        """批量软删除。和 admin_bulk_update 一样：错一条算一条，不打断。"""
+        """批量软删除,错一条不中断其余。"""
         if not self._use_db:
             raise RuntimeError("admin_bulk_delete 仅在 DB 模式可用")
         deleted = 0
@@ -1371,12 +1357,12 @@ class DataStore:
         bbox: Optional[tuple] = None,
         order_by: str = "code_asc",
     ) -> Iterable[dict]:
-        """按筛选条件/显式 code 列表导出所有匹配文物（生成器，适合流式写 CSV）。
+        """按条件/显式 code 列表导出,生成器形式(适合流式写 CSV)。
 
-        `codes` 给出时，其他筛选被忽略，只按这批 code 出。不分页——调用方负责节流。
+        给出 codes 时忽略其它筛选,按列表精确导出;不分页,调用方自行节流。
         """
         if not self._use_db:
-            # legacy 走内存：先拿 list 再一页页拉
+            # JSON 模式:内存分页迭代。
             def _gen_legacy():
                 page = 1
                 while True:
@@ -1466,25 +1452,25 @@ class DataStore:
             yield {k: r[k] for k in r.keys()}
 
     def admin_stats_overview(self) -> dict:
-        """后台首页聚合指标：一次 SQL 拿齐，避免前端多次往返。
+        """后台首页聚合指标,尽量一次 SQL 拿齐。
 
-        返回字段：
-          totals        各类汇总（总数、3D、PDF、照片、有边界、草稿、删除）
-          by_category   文物大类分布（code/label/count）
-          by_rank       保护级别分布
-          by_search_type 普查来源分布
-          by_township_top15  乡镇 Top15
-          by_era_stats_top8  年代 Top8
-          audit_14days  过去 14 天审计变更（按日按动作统计）
-          audit_recent  最近 10 条审计记录（人话版）
-          last_updated  数据库最新一次更新时间戳（秒）
+        返回字段:
+          totals              总数/3D/PDF/照片/有边界/草稿/删除
+          by_category         大类分布 [{code,label,count}]
+          by_rank             保护级别分布
+          by_search_type      普查来源分布
+          by_township_top     乡镇 Top15
+          by_era_stats_top    年代 Top8
+          audit_14days        近 14 天按日 × 动作统计
+          audit_recent        最近 10 条审计
+          last_updated        数据库最近更新秒时间戳
         """
         if not self._use_db:
             return self._admin_stats_legacy()
 
         conn = self._thread_conn()
 
-        # ── 总数 & 布尔字段计数（一条 SQL 搞完）────────
+        # ── 总数 + 布尔字段计数(一条 SQL) ────────────────
         t = conn.execute(
             """
             SELECT
@@ -1510,7 +1496,7 @@ class DataStore:
         }
         last_updated = int(t["last_updated"] or 0)
 
-        # ── 类别 / 级别 / 来源 分布 ─────────────────────
+        # ── 类别 / 级别 / 普查来源 分布 ──────────────────
         from codes import CATEGORY_CODES, RANK_CODES, SEARCH_TYPE_CODES
 
         def _count_group(col: str) -> dict:
@@ -1556,12 +1542,11 @@ class DataStore:
         ).fetchall()
         by_era_stats_top = [{"name": r["k"], "count": int(r["n"])} for r in rows]
 
-        # ── 过去 14 天审计变更（按日按动作）────────────
+        # ── 近 14 天审计变更(按日按动作) ──────────────
         import time as _time
         now = int(_time.time())
         start = now - 13 * 86400
-        # 按本地日统一到 00:00 方便分桶；这里用 sqlite date() 以 UTC 为准，
-        # 对中国用户偏差约 8h，但统计趋势够用。前端不再二次转换。
+        # 使用 sqlite localtime 分桶,前端直接消费不再二次转换。
         rows = conn.execute(
             """
             SELECT
@@ -1574,7 +1559,7 @@ class DataStore:
             """,
             (start,),
         ).fetchall()
-        # 构造 14 天完整序列（缺失日补 0）
+        # 补齐 14 天完整序列,缺失日填 0。
         import datetime as _dt
         today = _dt.date.fromtimestamp(now)
         days = [(today - _dt.timedelta(days=13 - i)).isoformat() for i in range(14)]
@@ -1625,7 +1610,7 @@ class DataStore:
         }
 
     def _admin_stats_legacy(self) -> dict:
-        """JSON 模式下 fallback：从内存 relics 现算。只返最低限度字段。"""
+        """JSON 模式 fallback,从内存 relics 现算(字段能少则少)。"""
         from codes import CATEGORY_CODES, RANK_CODES, SEARCH_TYPE_CODES
         from codes import normalize_category, normalize_rank, normalize_search_type
 
@@ -1683,7 +1668,7 @@ class DataStore:
         }
 
     def admin_list_townships(self) -> list[str]:
-        """DB 里出现过的 township 列表（去重排序，用于筛选下拉）。"""
+        """DB 中出现过的乡镇列表(去重排序),供筛选下拉使用。"""
         if not self._use_db:
             return sorted({(r.get("township") or "").strip() for r in self.relics if r.get("township")})
         conn = self._thread_conn()

@@ -1,11 +1,11 @@
-"""Step 01 | DOCX 档案 -> 结构化 Markdown。
+"""Step 01 | DOCX 档案 → 结构化 Markdown。
 
 输入:  data/input/01_archives/[<township>/]*.docx
 输出:  data/output/markdown/<township>/<stem>.md
-进度:  data/output/logs/step01_progress.json  (断点续传用)
+进度:  data/output/logs/step01_progress.json(断点续传)
 
-已存在且大小 >= MIN_VALID_SIZE 的 md 会被跳过,失败任务自动重试
-max_retries 次,退出码:0=全部成功,1=有失败,10=缺 API key,11=输入为空。
+已存在且大小 >= MIN_VALID_SIZE 的 md 会被跳过,失败任务重试 max_retries 次。
+退出码:0 全成功 / 1 有失败 / 10 缺 API Key / 11 输入为空。
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from _common import get_logger, get_paths, load_config
 STEP_ID = "step01"
 
 
-# 四普档案结构化提取提示词,输出严格按最后给出的 Markdown 模板。
+# 四普档案结构化提取提示词,输出严格遵循文末 Markdown 模板。
 SYSTEM_PROMPT = """你是一名专业的文物档案结构化信息提取助手，专门处理"第四次全国文物普查不可移动文物登记表"。
 
 你的任务：把输入的档案原文精确提取为规范 Markdown。
@@ -232,7 +232,7 @@ TEMPERATURE = 0.05
 MAX_TOKENS = 18000
 RETRY_DELAY = 15
 TIMEOUT_SECONDS = 300
-MIN_VALID_SIZE = 500  # 小于该字节数的 md 视为无效,会重新提取
+MIN_VALID_SIZE = 500  # 小于此字节数的 md 视为无效,需重新提取
 
 
 def docx_to_text(docx_path: str) -> str:
@@ -276,9 +276,7 @@ def save_progress(path: Path, progress: dict) -> None:
 
 
 def collect_tasks(input_root: Path, output_root: Path) -> list[dict]:
-    """扫描 input_root 下 DOCX,兼容两种组织方式:
-    input_root/<township>/xxx.docx  或  input_root/xxx.docx(归到 _root)。
-    """
+    """扫描 DOCX,兼容 `<township>/xxx.docx` 与平铺 `xxx.docx`(后者归到 `_root`)。"""
     tasks: list[dict] = []
     output_root.mkdir(parents=True, exist_ok=True)
 

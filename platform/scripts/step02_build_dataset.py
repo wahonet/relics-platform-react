@@ -1,18 +1,18 @@
-"""Step 02 | 结构化 Markdown -> 数据集。
+"""Step 02 | 结构化 Markdown → 数据集。
 
 输入:  data/output/markdown/<township>/*.md  (step01 产物)
 输出:  data/output/dataset/
-    relics_master.csv          主表,给前端用
-    relics_full.json           含简介/边界点的完整 JSON
-    relics_points.geojson      文物点位
-    relics_polygons.geojson    有 >= 3 个边界点的文物面
-    by_township/*.csv,json     按乡镇拆分
-    high_risk_relics.csv       按风险分排序的 Top N
+    relics_master.csv          主表
+    relics_full.json           含简介 / 边界点的完整 JSON
+    relics_points.geojson      点位图层
+    relics_polygons.geojson    >= 3 个边界点的文物面
+    by_township/*.{csv,json}   按乡镇拆分
+    high_risk_relics.csv       风险评分 Top N
     township_stats.csv         乡镇汇总
-    category_stats.csv         大类/年代/级别等维度汇总
-    parse_failures.txt         解析失败列表(仅当有失败时)
+    category_stats.csv         大类 / 年代 / 级别等维度汇总
+    parse_failures.txt         解析失败列表(有失败时写入)
 
-坐标按 config.geo.source_crs 统一到 WGS-84(wgs84/cgcs2000 原样,gcj02 做修正)。
+坐标按 config.geo.source_crs 统一到 WGS-84(wgs84 / cgcs2000 原样,gcj02 做修正)。
 """
 from __future__ import annotations
 
@@ -271,10 +271,9 @@ def parse_single_md(md_path: Path, township_name: str, convert) -> dict:
 
 
 def apply_3d_mapping(records: list[dict], models_dir: Path, log) -> int:
-    """按目录名把 3D tileset 关联到文物。命中顺序:
-    relic.name 精确 -> 目录名以 archive_code 开头 -> 双向子串包含。
-    命中记录置 has_3d=True、model_3d_path='05_models_3d/<folder>'。
-    """
+    """按目录名关联 3D tileset 到文物。
+    命中顺序:name 精确 → 目录名以 archive_code 开头 → 双向子串包含。
+    命中后写入 has_3d=True 与 model_3d_path='05_models_3d/<folder>'。"""
     for r in records:
         r["has_3d"] = False
         r["model_3d_path"] = ""
@@ -286,7 +285,7 @@ def apply_3d_mapping(records: list[dict], models_dir: Path, log) -> int:
     for sub in sorted(models_dir.iterdir()):
         if not sub.is_dir():
             continue
-        # 两种目录布局都接受: <name>/tileset.json 或 <name>/3dtiles/tileset.json
+        # 兼容两种布局:<name>/tileset.json 与 <name>/3dtiles/tileset.json。
         if (sub / "tileset.json").exists() or (sub / "3dtiles" / "tileset.json").exists():
             candidates.append(sub.name)
 
@@ -481,7 +480,7 @@ def save_township_stats(records: list[dict], path: Path, log) -> None:
         by_town[r["township"]].append(r)
 
     cond_levels = ["好", "较好", "一般", "较差", "差"]
-    # 四普六大类,顺序按国家局口径固定
+    # 四普六大类,顺序按国家文物局口径固定。
     cat_levels = [
         "古遗址", "古墓葬", "古建筑", "石窟寺及石刻",
         "近现代重要史迹及代表性建筑", "其他",
@@ -604,8 +603,7 @@ def main() -> int:
     for township_dir in sorted(md_root.iterdir()):
         if not township_dir.is_dir():
             continue
-        # 目录名允许带排序前缀(如 "01示范街道" / "07-示范镇"),
-        # 去掉前导数字/分隔符后,才能和 boundaries 层 township 名对齐。
+        # 允许目录名带排序前缀(如 "01示范街道"),去掉前缀后与边界层乡镇名对齐。
         township_name = re.sub(r"^[\d_\-\s]+", "", township_dir.name) or township_dir.name
         for md_path in sorted(township_dir.glob("*.md")):
             if md_path.name.endswith("_QC.md"):

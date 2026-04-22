@@ -10,5 +10,5 @@ router = APIRouter(tags=["统计"])
 
 @router.get("/stats")
 async def get_stats():
-    """各维度统计数据，供 ECharts 使用。"""
+    """各维度统计,供前端 ECharts 使用。"""
     return store.compute_stats()

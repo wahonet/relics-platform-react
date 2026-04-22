@@ -1,13 +1,11 @@
-"""Step 03 | DOCX 档案 -> 照片库 + 索引。
+"""Step 03 | DOCX → 照片库 + 索引。
 
-原理:
-    一份档案 DOCX 里"图纸清单"里的图先出现,"照片清单"里的图紧随其后,
-    所以第 i 张照片在 DOCX 图片流里的偏移 = 图纸数 + i。
+约定档案 DOCX 内图纸在前、照片在后,因此第 i 张照片在图片流中的
+偏移 = 图纸数 + i。多次运行可增量追加,索引按 (archive_code, relative_path) 去重。
+
 输出:
     data/output/photos/<archive_code>/<archive_code>_<照片号>_<名称>.ext
-    data/output/dataset/photo_index.csv   增量合并的索引(CSV)
-    data/output/dataset/photo_index.json  同上,JSON 版
-索引按 (archive_code, relative_path) 去重,可多次运行增量追加。
+    data/output/dataset/photo_index.{csv,json}
 """
 from __future__ import annotations
 

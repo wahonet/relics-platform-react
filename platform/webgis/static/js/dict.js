@@ -1,11 +1,10 @@
-// 国标 / 四普 编码字典（前端）。与后端 platform/scripts/codes.py 保持同步。
-// 所有 UI 文字、颜色、图标都从这里读，避免在业务代码里硬编码中文。
+// 国标 / 四普编码字典(前端)。与后端 `platform/scripts/codes.py` 保持同步。
 //
-// CATEGORY_MAP：文物大类。code 为 4 位编码，和 DB 里的 relics.category 一一对应。
-// RANK_MAP：保护级别。code 为 "1".."5"，size 用于点符号大小，越高级越大越醒目。
-// SEARCH_TYPE_MAP：普查来源（三普/县级以上/四普新增）。
+// CATEGORY_MAP   文物大类,code = 4 位编码,对应 DB 的 relics.category
+// RANK_MAP       保护级别,code = "1".."5",size 决定符号大小
+// SEARCH_TYPE_MAP 普查来源(三普 / 县级以上 / 四普新增)
 //
-// 颜色与旧 PALETTE 保持视觉一致：同色相的前 6 个用于 6 大类。
+// 颜色与旧 PALETTE 视觉一致:前 6 个色相依次对应 6 大类。
 (function () {
     const CATEGORY_MAP = {
         '0100': { label: '古遗址',                         color: '#f85149', icon: '/static/古文化遗址.png' },
@@ -30,7 +29,7 @@
         '110301': { label: '四普新增'     },
     };
 
-    // 中文 → 编码的反向映射，迁移期用于把老前端传入的中文字符串映射到编码。
+    // 中文 → 编码反向表,把老前端传入的中文统一映射到编码。
     const CATEGORY_ALIAS = {
         '古遗址': '0100', '古文化遗址': '0100',
         '古墓葬': '0200',
@@ -72,7 +71,7 @@
     function rankSize(code)          { return (RANK_MAP[code] || RANK_MAP['5']).size; }
     function rankProminent(code)     { return (RANK_MAP[code] || RANK_MAP['5']).prominent; }
 
-    // 标签最大显示距离（米），与 Cesium `DistanceDisplayCondition` 配合。
+    // 标签最大显示距离(米),配合 Cesium `DistanceDisplayCondition` 使用。
     const RANK_LABEL_DISTANCE = {
         '1': Number.MAX_VALUE,    // 国保始终显示
         '2': 30000,

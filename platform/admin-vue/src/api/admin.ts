@@ -242,13 +242,12 @@ export interface TilesSummary {
 }
 
 // ── API 封装 ────────────────────────────────────────────
-// 注意：FastAPI 里 admin.router 注册在 /api 下（main.py:`include_router(admin.router, prefix="/api")`），
-// router 自身 prefix="/admin"，所以所有接口真实路径都是 /api/admin/*。
-// 这里统一走 /api/admin 前缀，避免和 /admin-ui 路由混淆。
+// FastAPI 的 admin.router 注册前缀为 /api + /admin,真实路径为 /api/admin/*。
+// 本文件统一用 /api/admin 前缀,避免与前端 /admin-ui 路由混淆。
 const P = '/api/admin';
 
 export const adminApi = {
-  // 管线状态
+  // 管线
   pipeline: () => get<PipelineResp>(`${P}/pipeline`),
   stepItems: (stepId: string) => get<StepItemsResp>(`${P}/step/${stepId}/items`),
 
@@ -258,7 +257,7 @@ export const adminApi = {
   getTask: (taskId: string) => get<TaskDetail>(`${P}/task/${taskId}`),
   listTasks: (limit = 30) => get<TaskSummary[]>(`${P}/tasks?limit=${limit}`),
 
-  // 上传
+  // 上传 DOCX
   uploadSingle: (formData: FormData) =>
     post<{ message: string; township: string; filename: string; size_kb: number }>(
       `${P}/upload-single`,
@@ -272,12 +271,12 @@ export const adminApi = {
       { headers: { 'Content-Type': 'multipart/form-data' } },
     ),
 
-  // Dashboard 聚合
+  // Dashboard
   statsOverview: () => get<StatsOverview>(`${P}/stats-overview`),
   tilesSummary: (limit = 10) =>
     get<TilesSummary>(`${P}/tiles/summary?limit=${limit}`),
 
-  // 字典 / 下拉数据
+  // 字典
   codes: () => get<CodesResp>(`${P}/codes`),
   relicsTownships: () => get<{ townships: string[] }>(`${P}/relics-townships`),
 
@@ -292,7 +291,7 @@ export const adminApi = {
   getRelic: (code: string) =>
     get<Record<string, unknown>>(`${P}/relics/${encodeURIComponent(code)}`),
 
-  // 文物 CRUD（需 DB 模式）
+  // 文物 CRUD (DB 模式下可用)
   createRelic: (payload: Record<string, unknown>, actor?: string) =>
     post<{ ok: true; relic: Record<string, unknown> }>(
       `${P}/relics`,
@@ -324,13 +323,13 @@ export const adminApi = {
       { codes, status },
       actor ? { headers: { 'X-Actor': actor } } : undefined,
     ),
-  // 邻近文物（米为半径，默认 2km）
+  // 邻近文物,radius 单位为米,默认 2 km。
   neighbors: (code: string, radius = 2000, limit = 20) =>
     get<{ code: string; radius: number; items: NeighborItem[] }>(
       `${P}/relics/${encodeURIComponent(code)}/neighbors?radius=${radius}&limit=${limit}`,
     ),
 
-  // 导出 CSV：走原生 fetch 下载，便于设文件名、避开 axios 拦截器
+  // 导出 CSV:返回 URL 供 <a> 直接下载,避开 axios 拦截器并保留文件名。
   exportRelicsUrl(params: {
     search?: string; category?: string; rank?: string;
     township?: string; search_type?: string; status?: number;
@@ -377,7 +376,7 @@ export const adminApi = {
       actor ? { headers: { 'X-Actor': actor } } : undefined,
     ),
 
-  // 概要
+  // 概要 / 乡镇列表
   status: () => get<Record<string, unknown>>(`${P}/status`),
   townships: () => get<TownshipInfo[]>(`${P}/townships`),
 };

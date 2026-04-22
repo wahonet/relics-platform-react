@@ -1,27 +1,25 @@
-"""Step 06 | 行政边界 Shapefile -> GeoJSON(WGS-84)。
+"""Step 06 | 行政边界 Shapefile → WGS-84 GeoJSON。
 
-输入布局(两种任选,也可混用):
+输入布局(显式命名 / 启发式二选一,亦可混用):
 
-    推荐(显式命名):
+    显式:
         data/input/03_boundaries/
-            county/*.shp              县界(1 个面)
-            townships/*.shp           所有乡镇合在同 1 个 SHP
-            townships/<name>/*.shp    每个子目录 1 个乡镇(目录名即乡镇名)
+            county/*.shp              县界
+            townships/*.shp           所有乡镇合入同 1 个 SHP
+            townships/<name>/*.shp    子目录名即乡镇名
             villages/*.shp            村界
 
-    兼容(启发式):
-        data/input/03_boundaries/<any>/*.shp
-            1 要素 + 未投影       -> county
-            >100 要素 + 已投影    -> villages
-            子目录/1 SHP          -> townships(子目录名即乡镇名)
+    启发式(data/input/03_boundaries/<any>/*.shp):
+        1 要素 + 未投影       → county
+        >100 要素 + 已投影    → villages
+        子目录/1 SHP          → townships (子目录名即乡镇名)
 
-坐标统一到 WGS-84: 高斯-克吕格投影按 config.geo.boundaries.central_meridian
-逆投影; 若 boundaries.is_gcj02=True,会再追加一次 GCJ-02 -> WGS-84 修正,
-使边界层与 step02 产生的文物点对齐(下发的测绘成果常见在 GCJ-02 上再做
-高斯投影的情况)。
+坐标统一到 WGS-84:高斯-克吕格用 `config.geo.boundaries.central_meridian`
+逆投影;若 `boundaries.is_gcj02=True`,再做一次 GCJ-02 → WGS-84 修正,
+确保边界层与 step02 点位对齐(部分下发成果在 GCJ-02 上再做高斯投影)。
 
-输出 data/output/boundaries/ 下 county.geojson / townships.geojson /
-villages.geojson,村要素会自动回填 _township 字段(用点在多边形判定)。
+输出 `data/output/boundaries/{county,townships,villages}.geojson`;
+村要素自动回填 `_township`(点在多边形)。
 """
 from __future__ import annotations
 
@@ -37,7 +35,7 @@ from _common import gcj02_to_wgs84, get_logger, get_paths, load_config
 STEP_ID = "step06"
 
 
-# ── 高斯-克吕格逆投影(CGCS2000 / WGS-84 椭球参数近似) ──────────
+# ── 高斯-克吕格逆投影 (CGCS2000 / WGS-84 椭球参数近似) ──────
 _A = 6378137.0
 _F = 1 / 298.257222101
 _B = _A * (1 - _F)
@@ -46,8 +44,8 @@ _EP2 = (_A ** 2 - _B ** 2) / _B ** 2
 
 
 def gk_to_lonlat(x: float, y: float, central_meridian: float) -> tuple[float, float]:
-    """高斯-克吕格投影 -> 经纬度(近似 WGS-84)。
-    x > 1_000_000 视为含带号("带号 + 500000 + x_local"),会自动剥离。"""
+    """高斯-克吕格 → 经纬度(近似 WGS-84)。
+    `x > 1_000_000` 视为含带号("带号 + 500000 + x_local"),自动剥离。"""
     zone = int(x / 1_000_000) if x > 1_000_000 else 0
     x0 = x - zone * 1_000_000 - 500_000
     y0 = y
@@ -77,7 +75,7 @@ def gk_to_lonlat(x: float, y: float, central_meridian: float) -> tuple[float, fl
 
 
 def _safe_reader(shp_path: Path):
-    """打开 SHP;文件不存在/损坏/过小时返回 None 而不是抛异常。"""
+    """打开 SHP;文件不存在/损坏/过小时返回 None,不抛异常。"""
     if not shp_path.exists() or shp_path.stat().st_size < 100:
         return None
     try:
@@ -97,11 +95,10 @@ def is_projected(shp_path: Path) -> bool:
 
 
 def make_transform(projection: str, central_meridian: float, is_gcj02: bool = False):
-    """返回 (x, y) -> (lon, lat) 的转换函数,输出 WGS-84。
+    """返回 (x, y) → (lon, lat) 转换函数,输出 WGS-84。
 
-    is_gcj02=True 表示源数据是"GCJ-02 上的高斯投影",反投影之后还要
-    再做一次 GCJ-02 -> WGS-84 修正,否则与 step02 产生的文物点位会
-    有 ~500m 的系统性漂移。
+    is_gcj02=True 表示源数据是 GCJ-02 上的高斯投影,反投影后还需再做
+    GCJ-02 → WGS-84 修正,否则会相对 step02 点位系统漂移 ~500 m。
     """
     p = (projection or "auto").lower()
 
@@ -165,7 +162,7 @@ def shp_to_features(
     return features
 
 
-# ── 村 -> 镇 空间关联(bbox 中心 + 射线法点在面内) ───────────
+# ── 村 → 镇 空间关联 (bbox 中心 + 射线法点在面内) ─────────
 def _centroid_bbox(feature: dict) -> tuple[float, float]:
     ring = feature["geometry"]["coordinates"][0]
     lons = [p[0] for p in ring]
@@ -240,8 +237,8 @@ def save_geojson(name: str, features: list[dict], out_dir: Path, log) -> None:
 
 
 def collect_layers(root: Path, log) -> dict[str, list[tuple[Path, str]]]:
-    """扫描输入目录,返回 {county|townships|villages: [(shp, override_name)]}。
-    override_name 仅对 townships 有意义,用于"目录名即乡镇名"的布局。"""
+    """扫描输入,返回 `{county|townships|villages: [(shp, override_name)]}`。
+    override_name 仅对 townships 有意义,对应"子目录名即乡镇名"布局。"""
     layers: dict[str, list[tuple[Path, str]]] = {
         "county": [],
         "townships": [],
