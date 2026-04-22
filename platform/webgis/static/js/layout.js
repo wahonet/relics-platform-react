@@ -3,6 +3,20 @@ const dashState = { dashL: { side: 'left' }, dashR: { side: 'right' } };
 
 function _isMobile() { return window.innerWidth <= 768; }
 
+// 窗口尺寸变化时也要重算一次停靠位置，避免浏览器拖拽窗口后面板重叠。
+window.addEventListener('resize', function () {
+    clearTimeout(window.__layoutResizeT);
+    window.__layoutResizeT = setTimeout(function () { updateLayout(); }, 120);
+});
+
+// 从 CSS 自定义属性里读取像素尺寸，保证 UI 尺寸切换（sm/md/lg）时
+// 仪表盘 / 图例 / 信息框的停靠位置能同步跟上。
+function _cssVarPx(name, fallback) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? n : fallback;
+}
+
 function updateLayout() {
     if (_isMobile()) {
         clearTimeout(updateLayout._t);
@@ -11,7 +25,10 @@ function updateLayout() {
     }
     const filterOpen = document.getElementById('filterPanel').classList.contains('open');
     const infoOpen = document.getElementById('infoPanel').style.display === 'block';
-    const DASH_W = 320, DASH_GAP = 4, SIDE_W = 360;
+    const DASH_W = _cssVarPx('--dash-w', 320);
+    const DASH_GAP = 4;
+    const SIDE_W = _cssVarPx('--side-w', 360);
+    const INFO_W = _cssVarPx('--info-w', 420);
 
     const leftIds = [], rightIds = [];
     ['dashL', 'dashR'].forEach(id => {
@@ -146,51 +163,68 @@ function toggleFullscreen() {
 }
 
 function resetAll() {
-    if (document.getElementById('model3dBox').classList.contains('open')) close3DBox();
+    // 先把"飞回主视角"这一步规划好:不管前面清筛选 / 刷新视口有没有抛异常,
+    // 镜头都必须最终回到用户锁定的主视角,否则用户会觉得"重置按钮坏了"。
+    const goHome = function () {
+        if (typeof flyToHome === 'function') {
+            flyToHome(1.2);
+        } else {
+            viewer.camera.flyTo({
+                destination: Cesium.Cartesian3.fromDegrees(CENTER.lng, CENTER.lat, CENTER.h),
+                orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
+                duration: 1.2,
+            });
+        }
+    };
 
-    document.getElementById('filterPanel').classList.remove('open');
-    document.getElementById('btnFilter').classList.remove('on');
-    document.getElementById('infoPanel').style.display = 'none';
+    try {
+        if (document.getElementById('model3dBox').classList.contains('open')) close3DBox();
 
-    document.getElementById('routePanel').classList.remove('open');
-    document.getElementById('btnRoute').classList.remove('on');
-    if (typeof routeDeselectAll === 'function') routeDeselectAll();
-    if (typeof closeRoutePopup === 'function') closeRoutePopup();
-    if (typeof _villageCoverageOn !== 'undefined' && _villageCoverageOn) toggleVillageCoverage();
+        document.getElementById('filterPanel').classList.remove('open');
+        document.getElementById('btnFilter').classList.remove('on');
+        document.getElementById('infoPanel').style.display = 'none';
 
-    document.getElementById('searchInput').value = '';
-    document.getElementById('filterTown').value = '';
-    document.getElementById('filterLevel').value = '';
-    document.getElementById('filterCond').value = '';
-    document.getElementById('filter3D').value = '';
-    activeCats = new Set(allRelics.map(r => r.category_main));
-    document.querySelectorAll('.fp-chk').forEach(e => e.classList.add('active'));
-    statFilters = {};
+        document.getElementById('routePanel').classList.remove('open');
+        document.getElementById('btnRoute').classList.remove('on');
+        if (typeof routeDeselectAll === 'function') routeDeselectAll();
+        if (typeof closeRoutePopup === 'function') closeRoutePopup();
+        if (typeof _villageCoverageOn !== 'undefined' && _villageCoverageOn) toggleVillageCoverage();
 
-    if (typeof _relicPointsHidden !== 'undefined' && _relicPointsHidden) {
-        document.getElementById('hideRelicToggle').checked = false;
-        toggleHideRelicPoints();
+        document.getElementById('searchInput').value = '';
+        document.getElementById('filterTown').value = '';
+        document.getElementById('filterLevel').value = '';
+        document.getElementById('filterCond').value = '';
+        document.getElementById('filter3D').value = '';
+        activeCats = new Set(allRelics.map(r => r.category_main));
+        document.querySelectorAll('.fp-chk').forEach(e => e.classList.add('active'));
+        statFilters = {};
+
+        if (typeof _relicPointsHidden !== 'undefined' && _relicPointsHidden) {
+            document.getElementById('hideRelicToggle').checked = false;
+            toggleHideRelicPoints();
+        }
+        activeGroup = 'category_main';
+        dimColorMaps = {};
+
+        dashState.dashL.side = 'left';
+        dashState.dashR.side = 'right';
+        document.querySelectorAll('.dash.collapsed').forEach(el => {
+            el.classList.remove('collapsed');
+            const btn = el.querySelector('.dh-acts button:last-child');
+            if (btn) btn.textContent = '−';
+        });
+
+        onFilterChange();
+        updateLayout();
+        if (_isMobile()) mobileSetTab('map');
+    } catch (e) {
+        console.error('[resetAll] 清理筛选/UI 时出错,但仍会飞回主视角:', e);
     }
-    activeGroup = 'category_main';
-    dimColorMaps = {};
 
-    dashState.dashL.side = 'left';
-    dashState.dashR.side = 'right';
-    document.querySelectorAll('.dash.collapsed').forEach(el => {
-        el.classList.remove('collapsed');
-        const btn = el.querySelector('.dh-acts button:last-child');
-        if (btn) btn.textContent = '−';
-    });
-
-    onFilterChange();
-    updateLayout();
-    if (_isMobile()) mobileSetTab('map');
-
-    viewer.camera.flyTo({
-        destination: Cesium.Cartesian3.fromDegrees(CENTER.lng, CENTER.lat, CENTER.h),
-        orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
-        duration: 1.2,
-    });
+    // 兜底:先同步飞一次。如果 onFilterChange 里的视口刷新在 moveEnd 时抢了镜头,
+    // 我们在微任务结束后再飞一次,确保镜头最终落在主视角上。
+    goHome();
+    setTimeout(goHome, 50);
 
     toast('已重置所有筛选和视图');
 }
@@ -205,6 +239,11 @@ function toggleSettings() {
     const open = panel.classList.toggle('open');
     mask.classList.toggle('open', open);
     btn.classList.toggle('on', open);
+    // 面板打开时顺手初始化"主视角"级联下拉(懒加载 shandong JSON,
+    // 只在用户真的去改设置时才去拉 26KB 的行政区数据)
+    if (open && typeof initHomeViewUI === 'function') {
+        try { initHomeViewUI(); } catch (e) {}
+    }
 }
 
 const _themes = {

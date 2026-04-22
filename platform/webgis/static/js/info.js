@@ -1,6 +1,18 @@
 // 信息面板：基本信息 / 照片 / 图纸 / 简介 四个页签。
 let _currentInfoRelic = null;
 
+// 按编号拉完整记录再展示：给 PointPrimitive 点击用（视口里不再有 Entity.properties）
+async function showInfoByCode(code) {
+    if (!code) return;
+    // 先从内存里找（allRelics 是 JSON 模式的兼容快照），避免多一次网络
+    const cached = (window.allRelics || []).find(r => r.archive_code === code);
+    if (cached) { showInfo(cached); return; }
+    try {
+        const full = await (await fetch(API + '/api/relics/' + encodeURIComponent(code))).json();
+        if (full && full.archive_code) showInfo(full);
+    } catch (e) { console.warn('showInfoByCode failed', code, e); }
+}
+
 async function showInfo(r) {
     _currentInfoRelic = r;
     document.getElementById('piTitle').textContent = r.name || '-';
@@ -90,6 +102,7 @@ function closeInfo() {
     document.getElementById('infoPanel').style.display = 'none';
     if (typeof _wlReturnDate !== 'undefined') _wlReturnDate = null;
     updateLayout();
+    if (window.Bus) window.Bus.emit('info:closed');
 }
 
 function switchTab(el) {

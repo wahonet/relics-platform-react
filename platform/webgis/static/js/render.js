@@ -19,6 +19,7 @@ function getPointColor(r) {
 const CATEGORY_ICONS = {
     '古建筑': '/static/古建筑.png',
     '古墓葬': '/static/古墓葬.png',
+    '古遗址': '/static/古文化遗址.png',
     '古文化遗址': '/static/古文化遗址.png',
     '石窟寺及石刻': '/static/石窟寺及石刻.png',
     '近现代重要史迹及代表性建筑': '/static/近现代重要史迹及代表性建筑.png',
@@ -31,12 +32,34 @@ let _showTextLabels = true;
 let _labelFontSize = 14;
 let _labelFontFamily = '"Microsoft YaHei", sans-serif';
 
+// 图标是异步 decode 的；首次 updateLegend() 很可能在图标还没 onload 时就跑完了，
+// 于是 '古遗址' 之类的条目退化为"纯色圆点"。这里 onload 时清一次符号缓存，
+// 并在下一帧把图例重画一次，保证所有类别都拿到真正的 PNG 覆盖。
 (function preloadCategoryIcons() {
+    let pending = Object.keys(CATEGORY_ICONS).length;
+    function _rerenderOnReady() {
+        try { _symbolCache = {}; } catch (e) {}
+        try { if (typeof updateLegend === 'function') updateLegend(); } catch (e) {}
+        try {
+            if (typeof onFilterChange === 'function' && typeof filtered !== 'undefined' && filtered) {
+                onFilterChange();
+            }
+        } catch (e) {}
+    }
     for (const [cat, url] of Object.entries(CATEGORY_ICONS)) {
         const img = new Image();
-        img.crossOrigin = 'anonymous';
+        // 同源 /static 不需要 CORS 头；加了反而会让某些静态服务返回的图片被当作 taint 丢弃。
+        img.onload = () => {
+            _catImgs[cat] = img;
+            pending--;
+            // 每个图标 onload 都刷一次，避免最后一个失败卡住全局
+            _rerenderOnReady();
+        };
+        img.onerror = () => {
+            pending--;
+            console.warn('[icon] 预加载失败:', cat, url);
+        };
         img.src = url;
-        img.onload = () => { _catImgs[cat] = img; };
     }
 })();
 
@@ -120,15 +143,14 @@ function makeLegendIcon(category, color) {
 
 let _relicPointsHidden = false;
 
+// 这些开关同时作用于新渲染器（window.pointRenderer）和旧 entityMap（迁移期兼容）。
 function toggleHideRelicPoints() {
     _relicPointsHidden = document.getElementById('hideRelicToggle').checked;
     const show = !_relicPointsHidden;
-    Object.values(entityMap).forEach(function (e) {
-        e.show = show;
-    });
-    polygonEntities.forEach(function (e) {
-        e.show = show;
-    });
+    if (window.pointRenderer)  window.pointRenderer.setVisible(show);
+    if (window.polygonRenderer) window.polygonRenderer.setVisible(show);
+    Object.values(entityMap).forEach(function (e) { e.show = show; });
+    polygonEntities.forEach(function (e) { e.show = show; });
     viewer.scene.requestRender();
 }
 
@@ -140,6 +162,7 @@ function toggleNonSymbolize() {
 
 function toggleTextLabels() {
     _showTextLabels = document.getElementById('textLabelToggle').checked;
+    if (window.pointRenderer) window.pointRenderer.setLabelsEnabled(_showTextLabels);
     Object.values(entityMap).forEach(function (e) {
         if (e.label) e.label.show = _showTextLabels;
     });
@@ -149,6 +172,7 @@ function toggleTextLabels() {
 function setLabelSize(val) {
     _labelFontSize = parseInt(val);
     document.getElementById('labelSizeVal').textContent = val + 'px';
+    if (window.pointRenderer) window.pointRenderer.setLabelSize(_labelFontSize);
     var font = _labelFontSize + 'px ' + _labelFontFamily;
     Object.values(entityMap).forEach(function (e) {
         if (e.label) e.label.font = font;
@@ -159,6 +183,7 @@ function setLabelSize(val) {
 function setLabelFont(val) {
     _labelFontFamily = val;
     document.getElementById('labelFontSel').value = val;
+    if (window.pointRenderer) window.pointRenderer.setLabelFont(val);
     var font = _labelFontSize + 'px ' + _labelFontFamily;
     Object.values(entityMap).forEach(function (e) {
         if (e.label) e.label.font = font;
@@ -187,69 +212,48 @@ function _makePointCanvas(color, outlineColor, outlineW, sz) {
     return url;
 }
 
+// 旧的每点一个 Entity 渲染器已废弃。保留空实现作为 fallback，
+// 真正的点绘制走 window.pointRenderer（PointPrimitiveCollection）。
+// 为兼容老 filter 在 entity.show 上直接赋值的路径，这里留下空的 entityMap。
 function renderPoints(relics) {
-    Object.values(entityMap).forEach(e => viewer.entities.remove(e));
-    entityMap = {};
-
-    relics.forEach(r => {
-        if (!r.center_lat || !r.center_lng) return;
-        const cssC = getPointColor(r);
-        const h3d = is3D(r);
-        const pos = Cesium.Cartesian3.fromDegrees(r.center_lng, r.center_lat, r.center_alt || 0);
-
-        let bbImage, bbW, bbH;
-        if (_symbolMode && CATEGORY_ICONS[r.category_main]) {
-            bbW = 12; bbH = 12;
-            bbImage = makeSymbolIcon(r.category_main, cssC, h3d);
-        } else {
-            bbW = h3d ? 10 : 7;
-            bbH = bbW;
-            const olC = h3d ? '#ffd700' : 'rgba(0,0,0,0.6)';
-            const olW = h3d ? 2 : 1;
-            bbImage = _makePointCanvas(cssC, olC, olW, bbW);
-        }
-
-        const ent = viewer.entities.add({
-            position: pos,
-            show: !_relicPointsHidden,
-            billboard: {
-                image: bbImage,
-                width: bbW, height: bbH,
-                verticalOrigin: Cesium.VerticalOrigin.CENTER,
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-            },
-            label: {
-                text: r.name,
-                font: _labelFontSize + 'px ' + _labelFontFamily,
-                show: _showTextLabels,
-                fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: _hdMode ? 4 : 3,
-                style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-                verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-                pixelOffset: new Cesium.Cartesian2(0, -(bbH / 2 + 5)),
-                distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 25000),
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-                scale: _hdMode ? 1.0 : 0.85,
-            },
-            properties: r,
-        });
-        entityMap[r.archive_code] = ent;
-    });
+    if (!window.pointRenderer) return;
+    // 把筛选后的文物映射成视口查询级字段喂给新渲染器
+    // （当 app.js 采用视口查询路径时，本函数不会被调用）
+    const list = (relics || []).map(r => ({
+        id: r.archive_code,
+        code: r.archive_code,
+        name: r.name,
+        lng: r.center_lng,
+        lat: r.center_lat,
+        category: window.Dict.categoryCode(r.category_main),
+        rank: window.Dict.rankCode(r.heritage_level),
+        has_3d: !!r.has_3d,
+    }));
+    window.pointRenderer.diffUpdate(list);
 }
 
 async function loadPolygons() {
     try {
         const geojson = await (await fetch(API + '/api/geojson/polygons')).json();
-        geojson.features.forEach(f => {
-            const coords = f.geometry.coordinates[0];
-            const code = f.properties.archive_code;
+        if (!window.polygonRenderer && window.PolygonRenderer) {
+            window.polygonRenderer = new PolygonRenderer(viewer);
+        }
+        const colorFn = (code) => {
             const relic = allRelics.find(r => r.archive_code === code);
-            const cc = Cesium.Color.fromCssColorString(relic ? getPointColor(relic) : DEF_COLOR);
-            const pos = []; coords.forEach(c => pos.push(c[0], c[1]));
-            polygonEntities.push(viewer.entities.add({
-                polygon: { hierarchy: Cesium.Cartesian3.fromDegreesArray(pos), material: cc.withAlpha(0.28), outline: true, outlineColor: cc.withAlpha(0.7), outlineWidth: 1, height: 0 },
-            }));
-        });
+            return relic ? getPointColor(relic) : DEF_COLOR;
+        };
+        if (window.polygonRenderer) {
+            window.polygonRenderer.render(geojson.features || [], colorFn);
+        } else {
+            // fallback：PolygonRenderer 加载失败时退回旧的 Entity 实现
+            (geojson.features || []).forEach(f => {
+                const coords = f.geometry.coordinates[0];
+                const cc = Cesium.Color.fromCssColorString(colorFn(f.properties.archive_code));
+                const pos = []; coords.forEach(c => pos.push(c[0], c[1]));
+                polygonEntities.push(viewer.entities.add({
+                    polygon: { hierarchy: Cesium.Cartesian3.fromDegreesArray(pos), material: cc.withAlpha(0.28), outline: true, outlineColor: cc.withAlpha(0.7), outlineWidth: 1, height: 0 },
+                }));
+            });
+        }
     } catch (e) { console.error('面图层:', e); }
 }

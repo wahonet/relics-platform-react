@@ -73,13 +73,60 @@ function onFilterChange() {
 
     dimColorMaps[activeGroup] = buildColorMap(allRelics, DIMS.find(d=>d.id===activeGroup));
     if (_symbolMode) _symbolCache = {};
-    renderPoints(filtered);
+
+    // 地图点位：若 viewport 管理器已启动则下沉筛选到后端；否则走旧的 renderPoints(filtered)。
+    if (window.viewport && window.Dict) {
+        window.viewport.setFilters(_buildBackendFilters());
+    } else {
+        renderPoints(filtered);
+    }
+
     renderResultList(filtered);
     renderAllCharts(filtered);
     updateLegend();
 
     updateStatusSummary();
     if (filtered.length > 0 && filtered.length < allRelics.length) fitToRelics(filtered);
+
+    if (window.Bus) window.Bus.emit('filter:changed', { count: filtered.length, total: allRelics.length });
+}
+
+// 把前端筛选条件翻译成 by-bbox 能认的 URL 参数（国标编码）。
+// 只下沉 category/rank/township：cond/f3d/kw 仍由前端筛 filtered 列表，
+// 地图上会多出一些不满足 cond/f3d/kw 的点（可接受，避免来回重拉）。
+function _buildBackendFilters() {
+    const filters = {};
+
+    // category：activeCats 是中文名集合；若"全选"则不下沉以节省参数
+    const allCatNames = new Set(allRelics.map(r => r.category_main).filter(Boolean));
+    if (activeCats.size > 0 && activeCats.size < allCatNames.size) {
+        const codes = [];
+        for (const name of activeCats) {
+            const code = window.Dict.categoryCode(name);
+            if (code) codes.push(code);
+        }
+        if (codes.length) filters.category = [...new Set(codes)].join(',');
+    }
+
+    // rank：filterLevel（中文级别）+ statFilters.heritage_level 合并
+    const levelVal = (document.getElementById('filterLevel') || {}).value || '';
+    const rankCodes = new Set();
+    if (levelVal) {
+        const c = window.Dict.rankCode(levelVal);
+        if (c) rankCodes.add(c);
+    }
+    if (statFilters && statFilters.heritage_level) {
+        const c = window.Dict.rankCode(statFilters.heritage_level);
+        if (c) rankCodes.add(c);
+    }
+    if (rankCodes.size) filters.rank = [...rankCodes].join(',');
+
+    // township：前端乡镇下拉 / 图表联动都存的是中文乡镇名
+    const twn = (document.getElementById('filterTown') || {}).value || '';
+    if (twn) filters.township = twn;
+    else if (statFilters && statFilters.township) filters.township = statFilters.township;
+
+    return filters;
 }
 
 function updateStatusSummary() {

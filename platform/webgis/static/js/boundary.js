@@ -232,6 +232,30 @@ function toggleBoundaryMenu() {
     }
 }
 
+// 底图/影像菜单:以前是顶栏里一个 <select> + 外挂"透明"滑块,
+// 现在统一收进一个下拉菜单,让"影像"这一组不再横向挤占空间。
+function toggleBaseLayerMenu() {
+    var menu = document.getElementById('baseLayerMenu');
+    var btn = document.getElementById('btnBaseLayer');
+    menu.classList.toggle('open');
+    btn.classList.toggle('on', menu.classList.contains('open'));
+    if (menu.classList.contains('open')) {
+        var rect = btn.getBoundingClientRect();
+        menu.style.top = (rect.bottom + 4) + 'px';
+        menu.style.left = rect.left + 'px';
+    }
+}
+
+function pickBaseLayer(val, label) {
+    if (typeof switchBaseLayer === 'function') switchBaseLayer(val);
+    var txt = document.getElementById('btnBaseLayerText');
+    if (txt && label) txt.textContent = label;
+    var menu = document.getElementById('baseLayerMenu');
+    if (menu) menu.classList.remove('open');
+    var btn = document.getElementById('btnBaseLayer');
+    if (btn) btn.classList.remove('on');
+}
+
 function toggleLabelMenu() {
     var menu = document.getElementById('labelMenu');
     menu.classList.toggle('open');
@@ -255,5 +279,11 @@ document.addEventListener('click', function (e) {
     var bb = document.getElementById('btnBoundary');
     if (bm && bm.classList.contains('open') && !bm.contains(e.target) && !bb.contains(e.target)) {
         bm.classList.remove('open');
+    }
+    var blm = document.getElementById('baseLayerMenu');
+    var blb = document.getElementById('btnBaseLayer');
+    if (blm && blm.classList.contains('open') && !blm.contains(e.target) && !blb.contains(e.target)) {
+        blm.classList.remove('open');
+        if (blb) blb.classList.remove('on');
     }
 });

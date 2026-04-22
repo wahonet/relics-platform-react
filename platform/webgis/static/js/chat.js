@@ -48,6 +48,7 @@ function toggleChat() {
             appendMsg('ai', _aiGreeting());
         }
     }
+    if (window.Bus) window.Bus.emit('chat:toggled', { open });
 }
 
 // 轻量 Markdown 渲染；额外处理 [[label|action]] 作为地图/日志联动链接。

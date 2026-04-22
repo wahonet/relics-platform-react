@@ -36,9 +36,15 @@
         .tb.on{background:rgba(88,166,255,.15);border-color:var(--accent);color:var(--accent)}
         .tb svg{width:14px;height:14px;fill:currentColor}
         .tb-sep{width:1px;height:20px;background:var(--bd);flex-shrink:0}
+        .tb-group{display:flex;align-items:center;gap:6px}
+        /* 分组外框: 把"影像+下载""边界+标注+地形"这类同类工具视觉上捆起来 */
+        .tb-group.boxed{padding:3px 6px;border:1px solid var(--bd);border-radius:7px;background:rgba(88,166,255,.04)}
+        .tb-group.boxed:hover{border-color:var(--bd-active)}
         .tb-select{height:30px;padding:0 8px;background:var(--bg3);border:1px solid var(--bd);border-radius:5px;color:var(--t2);font-size:12px;font-family:inherit;outline:none;cursor:pointer}
         .tb-select:focus{border-color:var(--accent);color:var(--t1)}
         .tb-info{font-size:12px;color:var(--t2);white-space:nowrap}.tb-info b{color:var(--accent)}
+        /* 当前位置指示: 绝对定位钉在工具栏正中心,不随两侧按钮数增减而偏移 */
+        #statusSummary{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:15px;color:var(--accent);font-weight:700;letter-spacing:.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46vw;text-align:center;pointer-events:none}
 
         /* ── 地图 ── */
         #cesiumContainer{position:absolute;top:calc(var(--hdr) + 40px);left:0;right:0;bottom:0}
@@ -205,8 +211,9 @@
         #toast.err{border-color:rgba(248,81,73,.4);background:rgba(248,81,73,.12)}
 
         /* ── 边界 & 标注设置面板 ── */
-        #boundaryMenu,#labelMenu{display:none;position:absolute;z-index:210;background:rgba(13,17,23,.97);border:1px solid var(--bd);border-radius:8px;padding:10px 0;min-width:200px;backdrop-filter:blur(12px);box-shadow:0 8px 24px rgba(0,0,0,.4)}
-        #boundaryMenu.open,#labelMenu.open{display:block}
+        #boundaryMenu,#labelMenu,#baseLayerMenu{display:none;position:absolute;z-index:210;background:rgba(13,17,23,.97);border:1px solid var(--bd);border-radius:8px;padding:10px 0;min-width:200px;backdrop-filter:blur(12px);box-shadow:0 8px 24px rgba(0,0,0,.4)}
+        #boundaryMenu.open,#labelMenu.open,#baseLayerMenu.open{display:block}
+        #baseLayerMenu .bm-subtitle{padding:6px 14px 2px;font-size:10px;color:var(--t3);letter-spacing:1px}
         .bm-title{padding:2px 14px 8px;font-size:12px;color:var(--accent2);font-weight:600;border-bottom:1px solid var(--bd);margin-bottom:4px}
         .bm-opt{display:flex;align-items:center;gap:6px;padding:5px 14px;font-size:11px;color:var(--t3);cursor:pointer;transition:background .15s;user-select:none}
         .bm-opt:hover{background:rgba(88,166,255,.06)}
@@ -313,6 +320,71 @@
         #settingsBtn svg{width:18px;height:18px;fill:currentColor}
         #settingsMask{display:none;position:fixed;inset:0;z-index:249;background:rgba(0,0,0,.45);backdrop-filter:blur(3px)}
         #settingsMask.open{display:block}
+
+        /* ── 地图下载面板（模态） ── */
+        #downloadMask{display:none;position:fixed;inset:0;z-index:249;background:rgba(0,0,0,.45);backdrop-filter:blur(3px)}
+        #downloadMask.open{display:block}
+        #downloadPanel{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:250;
+            width:500px;max-height:88vh;overflow-y:auto;
+            background:rgba(13,17,23,.98);border:1px solid var(--bd);border-radius:12px;
+            backdrop-filter:blur(14px);box-shadow:0 20px 60px rgba(0,0,0,.6)}
+        #downloadPanel.open{display:block;animation:fadeScale .2s ease-out}
+        /* ── 下载面板专属样式：结构化小节 + 步骤徽标 ── */
+        .dl-step{padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.04)}
+        .dl-step:last-child{border-bottom:none}
+        .dl-step-hdr{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+        .dl-step-num{display:inline-flex;align-items:center;justify-content:center;
+            width:20px;height:20px;border-radius:50%;font-size:11px;font-weight:700;
+            background:rgba(88,166,255,.15);color:var(--accent);border:1px solid rgba(88,166,255,.4)}
+        .dl-step-title{font-size:12px;color:var(--t1);font-weight:600;letter-spacing:.5px}
+        .dl-step-hint{font-size:11px;color:var(--t3);margin-left:auto}
+        /* 范围选择：两个切换 tab */
+        .dl-mode-tabs{display:flex;gap:0;background:var(--bg3);border:1px solid var(--bd);border-radius:6px;padding:3px}
+        .dl-mode-tab{flex:1;height:28px;background:transparent;border:none;border-radius:4px;
+            color:var(--t3);font-size:12px;font-family:inherit;cursor:pointer;transition:all .15s}
+        .dl-mode-tab:hover{color:var(--t1)}
+        .dl-mode-tab.on{background:rgba(88,166,255,.18);color:var(--accent);font-weight:600;box-shadow:0 0 0 1px rgba(88,166,255,.35)}
+        .dl-mode-body{margin-top:10px}
+        /* 县域级联下拉 */
+        .dl-cascade{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+        .dl-cascade select{width:100%;height:32px;padding:0 8px;background:var(--bg3);
+            border:1px solid var(--bd);border-radius:5px;color:var(--t1);font-size:12px;font-family:inherit;cursor:pointer}
+        .dl-cascade select:focus{outline:none;border-color:var(--accent)}
+        .dl-cascade select:disabled{opacity:.4;cursor:not-allowed}
+        /* bbox 预览条 */
+        .dl-bbox-preview{font-size:11px;color:var(--t2);padding:8px 10px;margin-top:10px;
+            background:var(--bg3);border:1px dashed var(--bd);border-radius:5px;line-height:1.6;font-family:var(--mono,monospace)}
+        .dl-bbox-preview.empty{color:var(--t3);font-family:inherit;text-align:center;padding:12px}
+        .dl-bbox-preview b{color:var(--accent2);font-weight:600}
+        /* 缩放 / 类型 chips 再微调一下 */
+        #dlZoomChecks,#dlProviderChecks{display:flex;flex-wrap:wrap;gap:6px}
+        /* 估算 / 进度 数据卡 */
+        .dl-stat-card{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:4px}
+        .dl-stat-cell{padding:8px 10px;background:var(--bg3);border:1px solid var(--bd);border-radius:5px;text-align:center}
+        .dl-stat-cell .lbl{font-size:10px;color:var(--t3);margin-bottom:4px}
+        .dl-stat-cell .val{font-size:15px;font-weight:700;color:var(--t1)}
+        .dl-stat-cell.accent .val{color:var(--accent)}
+        .dl-stat-cell.green  .val{color:var(--green)}
+        .dl-stat-cell.yellow .val{color:var(--yellow)}
+        .dl-stat-cell.red    .val{color:var(--red)}
+        /* 主操作按钮区 */
+        .dl-actions{display:flex;gap:8px}
+        .dl-actions .fp-btn{flex:1;height:38px;font-size:13px;font-weight:600}
+        .dl-actions .fp-btn.primary{flex:2}
+        /* 缓存状态小节：折叠外观 */
+        .dl-cache-summary{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-bottom:8px}
+        .dl-cache-cell{padding:6px 8px;background:var(--bg3);border:1px solid var(--bd);border-radius:4px;
+            font-size:11px;display:flex;justify-content:space-between;align-items:center}
+        .dl-cache-cell .k{color:var(--t3)}
+        .dl-cache-cell .v{color:var(--accent);font-weight:600}
+        .dl-cache-actions{display:flex;gap:6px;flex-wrap:wrap}
+        .dl-cache-actions .fp-btn{flex:1;min-width:72px;height:28px;font-size:11px}
+        /* 画框时地图角标 */
+        #bboxDrawHint{display:none;position:fixed;top:calc(var(--hdr) + 48px);left:50%;transform:translateX(-50%);z-index:205;
+            background:rgba(88,166,255,.92);color:#fff;padding:6px 14px;border-radius:6px;font-size:12px;pointer-events:none;
+            box-shadow:0 4px 16px rgba(0,0,0,.4)}
+        #bboxDrawHint.show{display:block}
+        
         #settingsPanel{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:250;
             width:420px;max-height:80vh;overflow-y:auto;
             background:rgba(13,17,23,.98);border:1px solid var(--bd);border-radius:12px;
@@ -714,7 +786,7 @@
     <h1>{{ full_name }}</h1>
     <div class="hdr-right">
         <button id="helpBtn" onclick="toggleHelp()" title="使用说明">?</button>
-        <button id="adminBtn" onclick="window.open('/admin','_blank')" title="数据处理管理">
+        <button id="adminBtn" onclick="window.open('/admin-ui/','_blank')" title="打开管理后台">
             <svg viewBox="0 0 24 24"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>
         </button>
         <button id="settingsBtn" onclick="toggleSettings()" title="设置">
@@ -726,45 +798,72 @@
     </div>
 </div>
 
-<!-- 工具栏 -->
+<!-- 工具栏 —— 按"筛选 | 影像+下载 | 边界+标注+地形 | 右:全屏+重置"四组分隔，同类用外框捆到一起 -->
 <div id="toolbar">
-    <button class="tb" id="btnFilter" onclick="togglePanel('filter')">
-        <svg viewBox="0 0 24 24"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg>筛选
-    </button>
-    <div class="tb-sep"></div>
-    <select class="tb-select" id="baseLayerSelect" onchange="switchBaseLayer(this.value)">
-        <option value="arcgis_sat">离线影像</option>
-        <option value="osm">离线路网</option>
-        <option value="none">无底图</option>
-    </select>
-    <div class="tb-range-wrap">透明<input type="range" class="tb-range" id="baseAlpha" min="0" max="100" value="90" oninput="setBaseMapAlpha(this.value)"><span id="baseAlphaVal">90%</span></div>
-    <div class="tb-sep"></div>
-    <label class="tb" style="cursor:pointer;gap:4px;user-select:none"><input type="checkbox" id="terrainToggle" onchange="toggleTerrain()" style="accent-color:var(--accent);cursor:pointer;margin:0">
-        <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:currentColor;flex-shrink:0"><path d="M14 6l-3.75 5 2.85 3.8-1.6 1.2C9.81 13.75 7 10 7 10l-6 8h22L14 6z"/></svg>地形</label>
-    <div class="tb-sep"></div>
-    <button class="tb" id="btnBoundary" onclick="toggleBoundaryMenu()">
-        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>边界 ▾
-    </button>
-    <button class="tb" id="btnLabel" onclick="toggleLabelMenu()">
-        <svg viewBox="0 0 24 24"><path d="M5 4v3h5.5v12h3V7H19V4H5z"/></svg>标注 ▾
-    </button>
-    <div class="tb-sep"></div>
-    <button class="tb" onclick="toggleFullscreen()">
-        <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>全屏
-    </button>
-    <div class="tb-sep"></div>
-    <button class="tb" id="btnRoute" onclick="toggleRoutePanel()">
-        <svg viewBox="0 0 24 24"><path d="M21 3L3 10.53v.98l6.84 2.65L12.48 21h.98L21 3z"/></svg>路线
-    </button>
-    <div class="tb-sep"></div>
-    <button class="tb" id="btnReset" onclick="resetAll()" title="重置所有筛选和视图">
-        <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>重置
-    </button>
-    <div class="tb-sep"></div>
+    <!-- 组 1：数据查询(筛选放最前) -->
+    <div class="tb-group boxed" title="数据查询">
+        <button class="tb" id="btnFilter" onclick="togglePanel('filter')">
+            <svg viewBox="0 0 24 24"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg>筛选
+        </button>
+        <button class="tb" id="btnRoute" onclick="toggleRoutePanel()">
+            <svg viewBox="0 0 24 24"><path d="M21 3L3 10.53v.98l6.84 2.65L12.48 21h.98L21 3z"/></svg>路线
+        </button>
+    </div>
+
+    <!-- 组 2：影像类(底图 + 下载瓦片),透明度收进底图菜单 -->
+    <div class="tb-group boxed" title="影像 / 瓦片">
+        <button class="tb" id="btnBaseLayer" onclick="toggleBaseLayerMenu()" title="底图类型 / 透明度">
+            <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg><span id="btnBaseLayerText">离线影像</span> ▾
+        </button>
+        <button class="tb" id="btnDownload" onclick="toggleDownloadPanel()" title="框选区域下载离线瓦片">
+            <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>下载地图
+        </button>
+    </div>
+
+    <!-- 组 3：图层叠加(边界 + 标注 + 地形) -->
+    <div class="tb-group boxed" title="图层叠加">
+        <button class="tb" id="btnBoundary" onclick="toggleBoundaryMenu()">
+            <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>边界 ▾
+        </button>
+        <button class="tb" id="btnLabel" onclick="toggleLabelMenu()">
+            <svg viewBox="0 0 24 24"><path d="M5 4v3h5.5v12h3V7H19V4H5z"/></svg>标注 ▾
+        </button>
+        <label class="tb" style="cursor:pointer;gap:4px;user-select:none" title="勾选进入 3D 斜视并显示地形"><input type="checkbox" id="terrainToggle" onchange="toggleTerrain()" style="accent-color:var(--accent);cursor:pointer;margin:0">
+            <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:currentColor;flex-shrink:0"><path d="M14 6l-3.75 5 2.85 3.8-1.6 1.2C9.81 13.75 7 10 7 10l-6 8h22L14 6z"/></svg>地形</label>
+    </div>
+
     <div class="tb-info">显示 <b id="tbCount">-</b> 处</div>
+
+    <!-- 用绝对定位把"当前位置"真正钉在工具栏正中心,
+         两侧 flex 怎么增减都不会让它左右漂移 -->
+    <div id="statusSummary">当前位置：全部文物</div>
+
     <div style="flex:1"></div>
-    <div id="statusSummary" style="font-size:13px;color:var(--accent);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:500px;text-align:center">当前位置：全部文物</div>
-    <div style="flex:1"></div>
+
+    <!-- 组 4：最右侧,窗口级操作(全屏 / 重置) -->
+    <div class="tb-group boxed" title="窗口与重置">
+        <button class="tb" onclick="toggleFullscreen()">
+            <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>全屏
+        </button>
+        <button class="tb" id="btnReset" onclick="resetAll()" title="重置所有筛选和视图">
+            <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>重置
+        </button>
+    </div>
+</div>
+
+<!-- 底图 / 影像下拉菜单(离线 + 在线 + 透明度一并收纳) -->
+<div id="baseLayerMenu">
+    <div class="bm-title">底图影像</div>
+    <div class="bm-subtitle">离线（走本地瓦片缓存）</div>
+    <label class="bm-opt"><input type="radio" name="baseLayerRadio" value="arcgis_sat" checked onchange="pickBaseLayer(this.value,'离线影像')"> 离线影像</label>
+    <label class="bm-opt"><input type="radio" name="baseLayerRadio" value="osm" onchange="pickBaseLayer(this.value,'离线矢量')"> 离线矢量</label>
+    <div class="bm-subtitle">在线（需网络）</div>
+    <label class="bm-opt"><input type="radio" name="baseLayerRadio" value="gaode_sat" onchange="pickBaseLayer(this.value,'在线影像（高德）')"> 在线影像（高德）</label>
+    <label class="bm-opt"><input type="radio" name="baseLayerRadio" value="gaode_vec" onchange="pickBaseLayer(this.value,'在线矢量（高德）')"> 在线矢量（高德）</label>
+    <div class="bm-sep"></div>
+    <label class="bm-opt"><input type="radio" name="baseLayerRadio" value="none" onchange="pickBaseLayer(this.value,'无底图')"> 无底图</label>
+    <div class="bm-sep"></div>
+    <div class="bm-range-row"><span class="bm-range-label">透明度</span><input type="range" class="bm-range" id="baseAlpha" min="0" max="100" value="90" oninput="setBaseMapAlpha(this.value)"><span class="bm-range-val" id="baseAlphaVal">90%</span></div>
 </div>
 
 <!-- 边界图层下拉菜单 -->
@@ -799,8 +898,114 @@
     </div>
 </div>
 
-<!-- 普查路线面板 -->
-<div id="routePanel">
+<!-- 地图下载面板 -->
+<div id="downloadMask" onclick="toggleDownloadPanel()"></div>
+<div id="downloadPanel">
+    <div class="sp-hdr">
+        <h3>离线瓦片下载</h3>
+        <button onclick="toggleDownloadPanel()" title="关闭">&times;</button>
+    </div>
+
+    <!-- 第 1 步：下载范围 -->
+    <div class="dl-step">
+        <div class="dl-step-hdr">
+            <span class="dl-step-num">1</span>
+            <span class="dl-step-title">选择下载范围</span>
+        </div>
+        <div class="dl-mode-tabs" id="dlModeTabs">
+            <button class="dl-mode-tab on"  data-mode="bbox"   onclick="dlSetMode('bbox')">在地图框选</button>
+            <button class="dl-mode-tab"     data-mode="county" onclick="dlSetMode('county')">按县域选择</button>
+        </div>
+
+        <!-- 模式 1：框选 -->
+        <div class="dl-mode-body" id="dlModeBbox">
+            <button class="fp-btn primary" style="width:100%;height:32px" onclick="dlStartPickBbox()">
+                在地图上框选（按住左键拖拽）
+            </button>
+        </div>
+
+        <!-- 模式 2：县域级联（山东省） -->
+        <div class="dl-mode-body" id="dlModeCounty" style="display:none">
+            <div class="dl-cascade">
+                <select id="dlCityPick" onchange="dlOnCityChange()"><option value="">选择地级市…</option></select>
+                <select id="dlCountyPick" onchange="dlOnCountyChange()" disabled><option value="">请先选市…</option></select>
+            </div>
+            <div style="font-size:11px;color:var(--t3);margin-top:6px">
+                当前仅支持山东省；也可以只选市一级。
+            </div>
+        </div>
+
+        <!-- 当前 bbox 展示 -->
+        <div id="dlBboxLine" class="dl-bbox-preview empty">尚未选择范围</div>
+    </div>
+
+    <!-- 第 2 步：瓦片 & 层级 -->
+    <div class="dl-step">
+        <div class="dl-step-hdr">
+            <span class="dl-step-num">2</span>
+            <span class="dl-step-title">瓦片类型</span>
+            <span class="dl-step-hint">离线优先选 ArcGIS + OSM</span>
+        </div>
+        <div id="dlProviderChecks">
+            <label class="fp-chk active" data-p="arcgis_sat"><input type="checkbox" checked value="arcgis_sat">卫星影像 · ArcGIS</label>
+            <label class="fp-chk active" data-p="osm"><input type="checkbox" checked value="osm">矢量路网 · OSM</label>
+            <label class="fp-chk" data-p="gaode_sat"><input type="checkbox" value="gaode_sat">卫星影像 · 高德</label>
+            <label class="fp-chk" data-p="gaode_vec"><input type="checkbox" value="gaode_vec">矢量路网 · 高德</label>
+        </div>
+    </div>
+
+    <div class="dl-step">
+        <div class="dl-step-hdr">
+            <span class="dl-step-num">3</span>
+            <span class="dl-step-title">缩放层级</span>
+            <span class="dl-step-hint">每提升 1 级 ≈ ×4 瓦片</span>
+        </div>
+        <div id="dlZoomChecks">
+            <label class="fp-chk active" data-z="12"><input type="checkbox" checked value="12">Z12</label>
+            <label class="fp-chk active" data-z="13"><input type="checkbox" checked value="13">Z13</label>
+            <label class="fp-chk active" data-z="14"><input type="checkbox" checked value="14">Z14</label>
+            <label class="fp-chk active" data-z="15"><input type="checkbox" checked value="15">Z15</label>
+            <label class="fp-chk" data-z="16"><input type="checkbox" value="16">Z16</label>
+            <label class="fp-chk" data-z="17"><input type="checkbox" value="17">Z17</label>
+        </div>
+    </div>
+
+    <!-- 第 4 步：预估 + 下载 -->
+    <div class="dl-step">
+        <div class="dl-step-hdr">
+            <span class="dl-step-num">4</span>
+            <span class="dl-step-title">预估与下载</span>
+        </div>
+        <div id="dlEstimate" style="display:none;margin-bottom:10px">
+            <div class="dl-stat-card" id="dlEstimateBody"></div>
+        </div>
+        <div id="dlProgress" style="margin-bottom:10px;display:none"></div>
+        <div class="dl-actions">
+            <button class="fp-btn secondary" onclick="dlEstimate()">预估</button>
+            <button class="fp-btn primary" id="dlStartBtn" onclick="dlStartDownload()">开始下载</button>
+        </div>
+    </div>
+
+    <!-- 本地缓存状态（次要信息） -->
+    <div class="dl-step">
+        <div class="dl-step-hdr">
+            <span class="dl-step-num" style="background:rgba(63,185,80,.15);color:var(--green);border-color:rgba(63,185,80,.35)">✓</span>
+            <span class="dl-step-title">本地缓存</span>
+            <span class="dl-step-hint" id="dlCacheInfoHint">—</span>
+        </div>
+        <div id="dlCacheInfo" class="dl-cache-summary">
+            <div style="grid-column:1/-1;color:var(--t3);font-size:11px;text-align:center;padding:6px">
+                点击"刷新"查看离线瓦片体量
+            </div>
+        </div>
+        <div id="dlCachePathLine" style="font-size:10px;color:var(--t2);margin:6px 0 8px;word-break:break-all;font-family:var(--mono,monospace)"></div>
+        <div class="dl-cache-actions">
+            <button class="fp-btn secondary" onclick="dlRefreshCacheInfo()">刷新</button>
+            <button class="fp-btn secondary" onclick="dlOpenCacheFolder()" title="在系统文件管理器里打开瓦片缓存目录">打开文件夹</button>
+            <button class="fp-btn secondary" style="color:var(--red);border-color:rgba(248,81,73,.4)" onclick="dlClearCache()" title="删除所有已缓存的离线瓦片">清空缓存</button>
+        </div>
+    </div>
+</div>
     <div class="rp-title">普查路线查看<button onclick="toggleRoutePanel()">&times;</button></div>
     <div class="rp-summary" id="routeSummary">加载中...</div>
     <div class="rp-actions">
@@ -1036,6 +1241,30 @@
             <div class="sp-theme" data-theme="pink" onclick="setTheme('pink')" title="浪漫粉" style="background:linear-gradient(135deg,#f778ba,#e84393)"></div>
         </div>
     </div>
+
+    <!-- 主视角:山东省市/县级联,点"重置"时飞到这里 -->
+    <div class="sp-group">
+        <div class="sp-group-title">主视角（重置后回到这里）</div>
+        <div style="font-size:11px;color:var(--t3);line-height:1.6;margin-bottom:8px">
+            按 <b>地级市 → 区县</b> 两级选择，仅限山东省。<b style="color:var(--accent)">选好就自动生效</b>，"应用并飞过去"只是顺便飞一下；之后顶部"重置"按钮都会回到这里。
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+            <select id="hvCityPick" onchange="onHvCityChange()"
+                style="height:32px;padding:0 8px;background:var(--bg3);border:1px solid var(--bd);border-radius:5px;color:var(--t1);font-size:12px;font-family:inherit;cursor:pointer">
+                <option value="">选择地级市…</option>
+            </select>
+            <select id="hvCountyPick" disabled onchange="onHvCountyChange()"
+                style="height:32px;padding:0 8px;background:var(--bg3);border:1px solid var(--bd);border-radius:5px;color:var(--t1);font-size:12px;font-family:inherit;cursor:pointer">
+                <option value="">请先选市…</option>
+            </select>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+            <button class="fp-btn primary" style="flex:2;height:30px;font-size:12px" onclick="applyHomeViewFromPick()">应用并飞过去</button>
+            <button class="fp-btn secondary" style="flex:1;height:30px;font-size:11px" onclick="applyHomeViewFromCurrent()" title="把当前地图视角固化为主视角">用当前视角</button>
+            <button class="fp-btn secondary" style="flex:1;height:30px;font-size:11px;color:var(--red);border-color:rgba(248,81,73,.4)" onclick="resetHomeView()" title="清除自定义,回到后端配置的默认位置">恢复默认</button>
+        </div>
+        <div id="hvCurrent" style="font-size:11px;color:var(--t2);padding:6px 10px;background:var(--bg3);border:1px dashed var(--bd);border-radius:5px;line-height:1.5">—</div>
+    </div>
     <div class="sp-group">
         <div class="sp-group-title">数据统计 (左)</div>
         <div class="sp-row"><span class="sp-row-label">文物类别</span>
@@ -1170,6 +1399,9 @@
     </button>
 </div>
 
+<!-- 框选提示条 -->
+<div id="bboxDrawHint">按住鼠标左键在地图上拖拽画出矩形 · 松开完成 · ESC 取消</div>
+
 <!-- Toast -->
 <div id="toast"></div>
 <!-- Dock indicator -->
@@ -1178,18 +1410,26 @@
 <script src="/static/js/config.js"></script>
 <script src="/static/js/state.js"></script>
 <script src="/static/js/utils.js"></script>
+<script src="/static/js/bus.js"></script>
+<script src="/static/js/dict.js"></script>
 <script src="/static/js/map.js"></script>
 <script src="/static/js/boundary.js"></script>
+<script src="/static/js/point_renderer.js"></script>
+<script src="/static/js/polygon_renderer.js"></script>
+<script src="/static/js/viewport.js"></script>
 <script src="/static/js/render.js"></script>
 <script src="/static/js/filter.js"></script>
 <script src="/static/js/charts.js"></script>
 <script src="/static/js/info.js"></script>
 <script src="/static/js/lightbox.js"></script>
 <script src="/static/js/model3d.js"></script>
+<script src="/static/js/home_view.js"></script>
 <script src="/static/js/layout.js"></script>
 <script src="/static/js/worklog.js"></script>
 <script src="/static/js/route.js"></script>
 <script src="/static/js/chat.js"></script>
+<script src="/static/js/pick_mode.js"></script>
+<script src="/static/js/tile_download.js"></script>
 <script src="/static/js/app.js"></script>
 </body>
 </html>
