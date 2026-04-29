@@ -8,7 +8,7 @@ cd /d "%~dp0platform\webgis-react"
 REM -- check npm --
 where npm >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] npm not found. Install Node.js LTS (>=18): https://nodejs.org/
+    echo [ERROR] npm not found. Install Node.js LTS v18 or newer: https://nodejs.org/
     pause
     exit /b 1
 )
