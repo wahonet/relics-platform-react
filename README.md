@@ -23,6 +23,7 @@ clone 下来按 `setup → (放入你自己的数据并改 config.yaml) → run_
 
 ## 功能概览
 
+- **React + three.js 主前端** — 全部 UI 切换为 React 18 + TypeScript + Vite 构建,主图组件继续使用 CesiumJS 提供地理引擎,**三维模型查看器**改为基于 three.js (`@react-three/fiber` + `3d-tiles-renderer`)。老版 vanilla 前端仍保留在 `/legacy` 路径,可作为回归对比。
 - **三维 WebGIS** — 基于 CesiumJS，支持卫星/街道底图、本地 DEM 地形、符号化点位、行政边界渲染；默认 **2D 正射俯视**，勾选"地形"自动切到 3D 斜视。
 - **底图与在线源切换** — 底图收纳进一个下拉菜单：`离线影像 / 离线矢量 / 在线影像（高德）/ 在线矢量（高德）/ 无底图`，透明度滑块也并入同一菜单；离线两项默认完全空白，只有进过"下载地图"模块入库的瓦片才会显示。
 - **离线瓦片下载模块** — 支持两种范围源：① **地图框选**，拉一个矩形就能下；② **按县域选择**，两级下拉（山东省 16 地市 → 县区）一键圈定。下载过程带实时进度条（张数 / MB / 命中 / 失败），完成后磁盘缓存直接被地图读取；面板内置"打开文件夹""清空缓存"按钮。下载历史落 `data/output/tile_cache/_download_history.jsonl`，并在 Admin Dashboard 的"离线瓦片缓存"卡片里汇总展示。
@@ -85,13 +86,18 @@ clone 下来按 `setup → (放入你自己的数据并改 config.yaml) → run_
 ```
 双击 run_pipeline.bat      # 数据管线：DOCX → Markdown → CSV/JSON/GeoJSON / 照片 / 图纸 / PDF / 边界
 双击 build_admin.bat       # 构建 Vue 管理后台（首次必须；依赖变更时重跑；需 Node.js 18+）
+双击 build_webgis.bat      # 构建 React + three.js 主前端（首次必须；依赖变更时重跑）
 双击 start_platform.bat    # 启动 WebGIS，默认浏览器自动打开 http://127.0.0.1:8000
 ```
 
-- 主图：`http://127.0.0.1:8000/`
+- 主图：`http://127.0.0.1:8000/` (`build_webgis.bat` 产物挂载在 `/app/`,根路径会自动 302 过去；未构建时回退到 `/legacy` 老版 Cesium 页面)
 - 管理后台：`http://127.0.0.1:8000/admin-ui/`（先 `build_admin.bat` 产物才会挂载；否则启动日志会提示跳过）
-- 默认管理员账号：见 `config.yaml → admin`，登录后的 Cookie 会被 Vue 后台自动带上。
+- 老版主图：`http://127.0.0.1:8000/legacy` (回归对比用)
+- 默认管理员账号：见 `config.yaml → admin`，登录后的 Cookie 会被前端自动带上。
 
+> 主前端开发模式 (热重载): `cd platform/webgis-react && npm run dev`,开发服务器默认在 `http://127.0.0.1:5174/`,
+> 已在 `vite.config.ts` 把 `/api/*` `/tiles/*` `/photos/*` `/drawings/*` `/boundaries/*` 等反代到 FastAPI 8000 端口。
+>
 > 管理后台开发模式（热重载）：`cd platform/admin-vue && npm run dev`，开发服务器默认在 `http://127.0.0.1:5173/`，
 > 已在 `vite.config.ts` 把 `/api/*` 和 `/tiles/*` 反代到 FastAPI 8000 端口，日常改 UI 不用重新 build。
 
@@ -129,15 +135,28 @@ relics-platform/
 │       └── logs/              ← 各脚本运行日志
 │
 └── platform/                  ← 平台代码（升级时可整体覆盖此目录）
-    ├── webgis/                ← FastAPI 后端 + Cesium 前端
-    │   ├── main.py            ← 瓦片代理穿透 + DEM 缓存 + 生命周期 + /admin-ui 静态挂载
+    ├── webgis/                ← FastAPI 后端 + 老版 Cesium 静态前端 (legacy fallback)
+    │   ├── main.py            ← 瓦片代理穿透 + DEM 缓存 + 生命周期 + /admin-ui /app 静态挂载
     │   ├── serve.py           ← 启动入口（读 config.yaml，自动开浏览器）
     │   ├── data_loader.py     ← Repository：SQLite 优先，JSON 兜底；含 CRUD / 审计 / 空间查询 / 回滚
     │   ├── terrain_provider.py← 本地 DEM → Cesium 地形瓦片
     │   ├── routers/           ← API：relics / stats / chat / admin / worklog / survey_routes
-    │   ├── static/js/         ← 主图前端脚本（见下方"前端模块"）
-    │   ├── templates/         ← index / login / model-viewer / pdf-viewer
+    │   ├── static/js/         ← 老版 vanilla 前端脚本 (供 /legacy 回退)
+    │   ├── templates/         ← index / login / model-viewer / pdf-viewer (老版)
     │   └── requirements.txt
+    ├── webgis-react/          ← React + three.js 主前端 (新版,挂载到 /app/)
+    │   ├── src/
+    │   │   ├── api/                ← axios + 按 router 拆分的 API
+    │   │   ├── stores/             ← Zustand: platform / relics / filter / ui / homeView
+    │   │   ├── map/                ← Cesium Viewer + 视口查询 + 边界图层
+    │   │   ├── three/              ← three.js 三维模型查看器 (r3f + 3d-tiles-renderer)
+    │   │   ├── components/         ← Header / Toolbar / FilterPanel / Dashboard 等
+    │   │   ├── pages/              ← ModelViewerPage / PdfViewerPage / LoginPage
+    │   │   ├── utils/              ← dict (国标编码) / markdown
+    │   │   └── styles/globals.css
+    │   ├── scripts/fix-cesium-path.mjs ← 构建后修正 Cesium 静态资源路径
+    │   ├── vite.config.ts     ← dev 反代 /api 等; 生产 base=/app/
+    │   └── package.json
     ├── admin-vue/             ← Vue 3 + TS + Element Plus 管理后台（独立 SPA）
     │   ├── src/
     │   │   ├── api/admin.ts        ← 统一 API 客户端（axios + 401/409 拦截器）

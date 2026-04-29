@@ -49,6 +49,15 @@ if not exist "platform\admin-vue\dist\index.html" (
     echo.
 )
 
+REM -- React webgis built? --
+if not exist "platform\webgis-react\dist\index.html" (
+    echo.
+    echo [NOTE] React webgis not built: / will fall back to legacy Cesium page.
+    echo        To enable the new React + three.js frontend, run build_webgis.bat once.
+    echo        (Main API and legacy /legacy still work either way.)
+    echo.
+)
+
 REM -- start (host/port read from config.yaml; serve.py opens the browser) --
 set "PYTHONIOENCODING=utf-8"
 %PYTHON% platform\webgis\serve.py

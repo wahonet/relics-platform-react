@@ -162,7 +162,12 @@ def _feature_enabled(cfg_key: str, auto_value: bool) -> bool:
 
 app = FastAPI(title="Relics Platform", version="1.0.0", lifespan=lifespan)
 
-_PUBLIC_PREFIXES = ("/login", "/api/login", "/static/", "/tiles/", "/api/terrain/", "/api/platform/config")
+_PUBLIC_PREFIXES = (
+    "/login", "/api/login", "/static/", "/tiles/",
+    "/api/terrain/", "/api/platform/config",
+    "/app/",  # React SPA 静态资源 (index.html / cesium / assets) 公开
+    "/legacy",  # 老版 vanilla 前端(回归对比用)
+)
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -842,6 +847,22 @@ if _ADMIN_VUE_DIST.exists():
 else:
     print(f"[启动] Vue 后台未构建，跳过挂载 /admin-ui/（开发期正常；生产请先 npm run build）")
 
+# React + three.js 主前端。`build_webgis.bat` 产出 dist/ 后挂载到 /app/。
+# /app/cesium 目录下还有 Cesium 静态资源 (Workers / Assets / Widgets / ThirdParty),
+# 由 vite-plugin-cesium 自动复制,Cesium 运行时会从 /app/cesium 加载。
+_WEBGIS_REACT_DIST = PROJECT_ROOT / "platform" / "webgis-react" / "dist"
+if _WEBGIS_REACT_DIST.exists():
+    app.mount(
+        "/app",
+        StaticFiles(directory=str(_WEBGIS_REACT_DIST), html=True),
+        name="webgis_react",
+    )
+    print(f"[启动] React 主前端已挂载: /app/ → {_WEBGIS_REACT_DIST}")
+else:
+    print(
+        f"[启动] React 主前端未构建，跳过挂载 /app/（开发期正常；生产请先 build_webgis.bat）"
+    )
+
 
 def _bootstrap_script() -> str:
     """拼出 inline <script>,把运行时配置注入到 window.__PLATFORM_CONFIG,
@@ -922,19 +943,45 @@ def _render_template(name: str) -> str:
     return html
 
 
+def _react_build_exists() -> bool:
+    return _WEBGIS_REACT_DIST.exists() and (_WEBGIS_REACT_DIST / "index.html").exists()
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
+    """主入口:有 React 构建产物时 302 到 /app/,否则回退到老版 Cesium 页面。
+
+    注入的 bootstrap script (window.__PLATFORM_CONFIG) 仍然写到老 index.html;
+    React 端通过 /api/platform/config 兜底获取相同字段,两条路径都能跑通。
+    """
+    if _react_build_exists():
+        return RedirectResponse(url="/app/", status_code=302)
+    return HTMLResponse(_render_template("index.html"))
+
+
+@app.get("/legacy", response_class=HTMLResponse)
+async def legacy_index():
+    """显式访问老版 vanilla 前端,用于回归对比。"""
     return _render_template("index.html")
 
 
 @app.get("/model-viewer", response_class=HTMLResponse)
-async def model_viewer():
-    return _render_template("model_viewer.html")
+async def model_viewer(request: Request):
+    """三维模型查看器:React 构建可用时跳转到 /app/#/model-viewer,否则回退到 Cesium 模板。"""
+    if _react_build_exists():
+        qs = request.url.query
+        target = "/app/#/model-viewer" + (("?" + qs) if qs else "")
+        return RedirectResponse(url=target, status_code=302)
+    return HTMLResponse(_render_template("model_viewer.html"))
 
 
 @app.get("/pdf-viewer", response_class=HTMLResponse)
-async def pdf_viewer():
-    return _render_template("pdf_viewer.html")
+async def pdf_viewer(request: Request):
+    if _react_build_exists():
+        qs = request.url.query
+        target = "/app/#/pdf-viewer" + (("?" + qs) if qs else "")
+        return RedirectResponse(url=target, status_code=302)
+    return HTMLResponse(_render_template("pdf_viewer.html"))
 
 
 @app.get("/admin")
@@ -950,7 +997,9 @@ class _LoginBody(BaseModel):
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page():
-    return _render_template("login.html")
+    if _react_build_exists():
+        return RedirectResponse(url="/app/#/login", status_code=302)
+    return HTMLResponse(_render_template("login.html"))
 
 
 @app.post("/api/login")
