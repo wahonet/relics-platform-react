@@ -50,7 +50,7 @@ clone 下来按 `setup → (放入你自己的数据并改 config.yaml) → run_
 
 ### 1. 初始化
 
-双击 `setup.bat`：
+双击 `1-setup.bat`：
 
 - 检测并安装 Python 依赖（Python 3.10+）
 - 创建 `data/input/` 与 `data/output/` 目录骨架
@@ -83,12 +83,16 @@ clone 下来按 `setup → (放入你自己的数据并改 config.yaml) → run_
 
 ### 3. 跑数据管线，启动平台
 
+四个 bat 文件按数字前缀顺序执行即可:
+
 ```
-双击 run_pipeline.bat      # 数据管线：DOCX → Markdown → CSV/JSON/GeoJSON / 照片 / 图纸 / PDF / 边界
-双击 build_admin.bat       # 构建 Vue 管理后台（首次必须；依赖变更时重跑；需 Node.js 18+）
-双击 build_webgis.bat      # 构建 React + three.js 主前端（首次必须；依赖变更时重跑）
-双击 start_platform.bat    # 启动 WebGIS，默认浏览器自动打开 http://127.0.0.1:8000
+双击 1-setup.bat       # 一次性初始化 (装 Python 依赖 / 建 data 目录 / 生成 config.yaml)
+双击 2-pipeline.bat    # 数据管线: DOCX → Markdown → CSV/JSON/GeoJSON / 照片 / 图纸 / PDF / 边界
+双击 3-build.bat       # 一次性构建两个前端: Vue 后台 + React 主前端 (需 Node.js 18+)
+双击 4-start.bat       # 启动 WebGIS,默认浏览器自动打开 http://127.0.0.1:8000
 ```
+
+> 数据没准备好时 `2-pipeline.bat` 会自动跳过空目录,可以直接跑 `3-build.bat` + `4-start.bat` 看到空壳子界面。
 
 - 主图：`http://127.0.0.1:8000/` (`build_webgis.bat` 产物挂载在 `/app/`,根路径会自动 302 过去；未构建时回退到 `/legacy` 老版 Cesium 页面)
 - 管理后台：`http://127.0.0.1:8000/admin-ui/`（先 `build_admin.bat` 产物才会挂载；否则启动日志会提示跳过）
@@ -111,10 +115,10 @@ relics-platform/
 ├── config.example.yaml        ← 配置模板，升级时对照合并
 ├── .gitignore                 ← 已忽略 config.yaml / data/ / .env / *.key
 │
-├── setup.bat                  ← 初始化向导（装依赖、建目录、生成 config.yaml）
-├── run_pipeline.bat           ← 数据管线入口
-├── build_admin.bat            ← 构建 Vue 管理后台（智能检测依赖变更触发 npm install）
-├── start_platform.bat         ← 启动 WebGIS 服务
+├── 1-setup.bat                ← 初始化向导（装依赖、建目录、生成 config.yaml）
+├── 2-pipeline.bat             ← 数据管线入口
+├── 3-build.bat                ← 同时构建 Vue 后台 + React 主前端（智能检测依赖变更触发 npm install）
+├── 4-start.bat                ← 启动 WebGIS 服务
 │
 ├── data/                      ← 用户数据区（不纳入 Git）
 │   ├── input/                 ← 原始资料

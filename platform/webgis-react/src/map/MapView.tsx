@@ -35,12 +35,11 @@ export function MapView({ onCompassRotate, onScaleUpdate }: MapViewProps) {
   const setUI = useUIStore((s) => s.set);
 
   const allRelicsLen = useRelicsStore((s) => s.all.length);
-  const filterSnapshot = useFilterStore((s) => ({
-    activeCats: [...s.activeCats].sort().join(","),
-    township: s.township,
-    level: s.level,
-    statFilters: JSON.stringify(s.statFilters),
-  }));
+  // 拆成原始值订阅,避免 selector 每次返回新对象引发无限渲染。
+  const filterActiveCats = useFilterStore((s) => s.activeCats);
+  const filterTownship = useFilterStore((s) => s.township);
+  const filterLevel = useFilterStore((s) => s.level);
+  const filterStatFilters = useFilterStore((s) => s.statFilters);
 
   const homeView = useHomeViewStore((s) => s.view);
 
@@ -122,9 +121,14 @@ export function MapView({ onCompassRotate, onScaleUpdate }: MapViewProps) {
     viewer.scene.postRender.addEventListener(onPostRender);
 
     return () => {
+      // 注意:在 React 18 StrictMode + hook 依赖链下,父级 useCesiumViewer 的
+      // cleanup (viewer.destroy()) 可能比这个 cleanup 更早跑,导致 viewer 已死。
+      // 所以全部访问都要保护。
       try {
-        viewer.scene.preRender.removeEventListener(onPreRender);
-        viewer.scene.postRender.removeEventListener(onPostRender);
+        if (!viewer.isDestroyed()) {
+          viewer.scene.preRender.removeEventListener(onPreRender);
+          viewer.scene.postRender.removeEventListener(onPostRender);
+        }
       } catch {
         /* ignore */
       }
@@ -178,10 +182,10 @@ export function MapView({ onCompassRotate, onScaleUpdate }: MapViewProps) {
     const backend = useFilterStore.getState().toBackend(allCatNames);
     vm.setFilters(backend);
   }, [
-    filterSnapshot.activeCats,
-    filterSnapshot.township,
-    filterSnapshot.level,
-    filterSnapshot.statFilters,
+    filterActiveCats,
+    filterTownship,
+    filterLevel,
+    filterStatFilters,
     allRelicsLen,
   ]);
 

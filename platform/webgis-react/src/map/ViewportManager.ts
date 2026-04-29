@@ -38,8 +38,16 @@ export class ViewportManager {
   }
 
   stop() {
+    // viewer 可能已被父级 hook 的 cleanup 提前销毁,这里要静默兜底,
+    // 否则会抛 "Cannot read properties of undefined (reading 'scene')"。
     if (this.moveEndCallback) {
-      this.viewer.camera.moveEnd.removeEventListener(this.moveEndCallback);
+      try {
+        if (!this.viewer.isDestroyed()) {
+          this.viewer.camera.moveEnd.removeEventListener(this.moveEndCallback);
+        }
+      } catch {
+        /* viewer 已销毁,忽略 */
+      }
       this.moveEndCallback = undefined;
     }
   }

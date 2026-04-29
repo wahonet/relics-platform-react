@@ -155,9 +155,14 @@ function ChartCard({
 
 export function Dashboard() {
   const allRelics = useRelicsStore((s) => s.all);
-  const filter = useFilterStore();
+  const search = useFilterStore((s) => s.search);
+  const township = useFilterStore((s) => s.township);
+  const level = useFilterStore((s) => s.level);
+  const cond = useFilterStore((s) => s.cond);
+  const threeD = useFilterStore((s) => s.threeD);
+  const activeCats = useFilterStore((s) => s.activeCats);
+  const statFilters = useFilterStore((s) => s.statFilters);
   const setStatFilters = useFilterStore((s) => s.setStatFilters);
-  const statFilters = filter.statFilters;
   const toggleStat = (dimId: string, value: string) => {
     const next = { ...statFilters };
     if (next[dimId] === value) delete next[dimId];
@@ -169,9 +174,9 @@ export function Dashboard() {
     const lvDim = DIMS.find((d) => d.id === "heritage_level");
     const twDim = DIMS.find((d) => d.id === "township");
     return allRelics.filter((r) => {
-      if (filter.activeCats.size && r.category_main && !filter.activeCats.has(r.category_main))
+      if (activeCats.size && r.category_main && !activeCats.has(r.category_main))
         return false;
-      const kw = filter.search.trim().toLowerCase();
+      const kw = search.trim().toLowerCase();
       if (
         kw &&
         !(r.name || "").toLowerCase().includes(kw) &&
@@ -179,21 +184,13 @@ export function Dashboard() {
         !(r.address || "").toLowerCase().includes(kw)
       )
         return false;
-      if (
-        filter.township &&
-        twDim &&
-        dimValue(r as Record<string, unknown>, twDim) !== filter.township
-      )
+      if (township && twDim && dimValue(r as Record<string, unknown>, twDim) !== township)
         return false;
-      if (
-        filter.level &&
-        lvDim &&
-        dimValue(r as Record<string, unknown>, lvDim) !== filter.level
-      )
+      if (level && lvDim && dimValue(r as Record<string, unknown>, lvDim) !== level)
         return false;
-      if (filter.cond && r.condition_level !== filter.cond) return false;
-      if (filter.threeD === "1" && !r.has_3d) return false;
-      if (filter.threeD === "0" && r.has_3d) return false;
+      if (cond && r.condition_level !== cond) return false;
+      if (threeD === "1" && !r.has_3d) return false;
+      if (threeD === "0" && r.has_3d) return false;
       for (const [sfDim, sfVal] of Object.entries(statFilters)) {
         const dim = DIMS.find((d) => d.id === sfDim);
         if (dim) {
@@ -203,7 +200,7 @@ export function Dashboard() {
       }
       return true;
     });
-  }, [allRelics, filter, statFilters]);
+  }, [allRelics, activeCats, search, township, level, cond, threeD, statFilters]);
 
   const totalRecords = relicsForChart.length;
   const has3d = relicsForChart.filter((r) => r.has_3d).length;

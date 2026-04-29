@@ -13,7 +13,7 @@ if exist "%~dp0python\python.exe" (
 ) else (
     where python >nul 2>&1
     if errorlevel 1 (
-        echo [ERROR] Python not found. Run setup.bat first.
+        echo [ERROR] Python not found. Run 1-setup.bat first.
         pause
         exit /b 1
     )
@@ -23,7 +23,7 @@ if exist "%~dp0python\python.exe" (
 
 REM -- config.yaml --
 if not exist "config.yaml" (
-    echo [ERROR] config.yaml missing. Run setup.bat first.
+    echo [ERROR] config.yaml missing. Run 1-setup.bat first.
     pause
     exit /b 1
 )
@@ -40,20 +40,17 @@ if errorlevel 1 (
     )
 )
 
-REM -- admin UI built? --
+REM -- frontends built? --
 if not exist "platform\admin-vue\dist\index.html" (
     echo.
     echo [NOTE] Vue admin UI not built: /admin-ui/ will return 404.
-    echo        To enable it, run build_admin.bat once.
-    echo        Main map and API still work.
+    echo        Run 3-build.bat once to enable it.
     echo.
 )
-
-REM -- React webgis built? --
 if not exist "platform\webgis-react\dist\index.html" (
     echo.
     echo [NOTE] React webgis not built: / will fall back to legacy Cesium page.
-    echo        To enable the new React + three.js frontend, run build_webgis.bat once.
+    echo        Run 3-build.bat once to enable the new React + three.js frontend.
     echo        (Main API and legacy /legacy still work either way.)
     echo.
 )

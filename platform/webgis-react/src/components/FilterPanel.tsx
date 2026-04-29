@@ -8,7 +8,17 @@ import { fetchRelicDetail } from "../api/relics";
 export function FilterPanel() {
   const open = useUIStore((s) => s.filterPanelOpen);
   const setUI = useUIStore((s) => s.set);
-  const filter = useFilterStore();
+  // 单独订阅各原始值,避免对整个 store 引用全量订阅后频繁重渲。
+  const search = useFilterStore((s) => s.search);
+  const township = useFilterStore((s) => s.township);
+  const level = useFilterStore((s) => s.level);
+  const cond = useFilterStore((s) => s.cond);
+  const threeD = useFilterStore((s) => s.threeD);
+  const activeCats = useFilterStore((s) => s.activeCats);
+  const setPartial = useFilterStore((s) => s.setPartial);
+  const setActiveCats = useFilterStore((s) => s.setActiveCats);
+  const toggleCat = useFilterStore((s) => s.toggleCat);
+  const resetFilter = useFilterStore((s) => s.reset);
   const allRelics = useRelicsStore((s) => s.all);
 
   const lvDim = DIMS.find((d) => d.id === "heritage_level");
@@ -54,19 +64,18 @@ export function FilterPanel() {
     [allRelics, catDim],
   );
 
-  // 首次加载完成后,把所有类别默认全选
   useEffect(() => {
-    if (catNames.length > 0 && filter.activeCats.size === 0) {
-      filter.setActiveCats(new Set(catNames));
+    if (catNames.length > 0 && activeCats.size === 0) {
+      setActiveCats(new Set(catNames));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catNames.length]);
 
   const filteredCount = useMemo(() => {
     return allRelics.filter((r) => {
-      if (filter.activeCats.size && r.category_main && !filter.activeCats.has(r.category_main))
+      if (activeCats.size && r.category_main && !activeCats.has(r.category_main))
         return false;
-      const kw = filter.search.trim().toLowerCase();
+      const kw = search.trim().toLowerCase();
       if (
         kw &&
         !(r.name || "").toLowerCase().includes(kw) &&
@@ -74,16 +83,16 @@ export function FilterPanel() {
         !(r.address || "").toLowerCase().includes(kw)
       )
         return false;
-      if (filter.township && twDim && dimValue(r as Record<string, unknown>, twDim) !== filter.township)
+      if (township && twDim && dimValue(r as Record<string, unknown>, twDim) !== township)
         return false;
-      if (filter.level && lvDim && dimValue(r as Record<string, unknown>, lvDim) !== filter.level)
+      if (level && lvDim && dimValue(r as Record<string, unknown>, lvDim) !== level)
         return false;
-      if (filter.cond && r.condition_level !== filter.cond) return false;
-      if (filter.threeD === "1" && !r.has_3d) return false;
-      if (filter.threeD === "0" && r.has_3d) return false;
+      if (cond && r.condition_level !== cond) return false;
+      if (threeD === "1" && !r.has_3d) return false;
+      if (threeD === "0" && r.has_3d) return false;
       return true;
     }).length;
-  }, [allRelics, filter, twDim, lvDim]);
+  }, [allRelics, activeCats, search, township, level, cond, threeD, twDim, lvDim]);
 
   const has3dCount = useMemo(
     () => allRelics.filter((r) => r.has_3d).length,
@@ -104,8 +113,8 @@ export function FilterPanel() {
         <input
           className="fp-search"
           placeholder="按名称 / 编号 / 地址搜索..."
-          value={filter.search}
-          onChange={(e) => filter.setPartial({ search: e.target.value })}
+          value={search}
+          onChange={(e) => setPartial({ search: e.target.value })}
         />
       </div>
       <div className="fp-section">
@@ -113,12 +122,12 @@ export function FilterPanel() {
         <div className="fp-checks">
           {catNames.map((name) => {
             const displayName = name === "近现代重要史迹及代表性建筑" ? "近现代史迹" : name;
-            const active = filter.activeCats.has(name);
+            const active = activeCats.has(name);
             return (
               <div
                 key={name}
                 className={"fp-chk" + (active ? " active" : "")}
-                onClick={() => filter.toggleCat(name)}
+                onClick={() => toggleCat(name)}
               >
                 <div
                   className="dot"
@@ -134,8 +143,8 @@ export function FilterPanel() {
         <div className="fp-label">乡镇</div>
         <select
           className="fp-select"
-          value={filter.township}
-          onChange={(e) => filter.setPartial({ township: e.target.value })}
+          value={township}
+          onChange={(e) => setPartial({ township: e.target.value })}
         >
           <option value="">全部乡镇</option>
           {towns.map((t) => (
@@ -149,8 +158,8 @@ export function FilterPanel() {
         <div className="fp-label">保护级别</div>
         <select
           className="fp-select"
-          value={filter.level}
-          onChange={(e) => filter.setPartial({ level: e.target.value })}
+          value={level}
+          onChange={(e) => setPartial({ level: e.target.value })}
         >
           <option value="">全部级别</option>
           {levels.map((l) => (
@@ -164,8 +173,8 @@ export function FilterPanel() {
         <div className="fp-label">保存现状</div>
         <select
           className="fp-select"
-          value={filter.cond}
-          onChange={(e) => filter.setPartial({ cond: e.target.value })}
+          value={cond}
+          onChange={(e) => setPartial({ cond: e.target.value })}
         >
           <option value="">全部现状</option>
           {conds.map((c) => (
@@ -179,8 +188,8 @@ export function FilterPanel() {
         <div className="fp-label">三维模型</div>
         <select
           className="fp-select"
-          value={filter.threeD}
-          onChange={(e) => filter.setPartial({ threeD: e.target.value as "" | "1" | "0" })}
+          value={threeD}
+          onChange={(e) => setPartial({ threeD: e.target.value as "" | "1" | "0" })}
         >
           <option value="">全部</option>
           <option value="1">仅有三维</option>
@@ -196,7 +205,7 @@ export function FilterPanel() {
         </button>
         <button
           className="fp-btn secondary"
-          onClick={() => filter.reset(new Set(catNames))}
+          onClick={() => resetFilter(new Set(catNames))}
         >
           重置
         </button>
@@ -206,13 +215,9 @@ export function FilterPanel() {
         <div>
           {allRelics
             .filter((r) => {
-              if (
-                filter.activeCats.size &&
-                r.category_main &&
-                !filter.activeCats.has(r.category_main)
-              )
+              if (activeCats.size && r.category_main && !activeCats.has(r.category_main))
                 return false;
-              const kw = filter.search.trim().toLowerCase();
+              const kw = search.trim().toLowerCase();
               if (
                 kw &&
                 !(r.name || "").toLowerCase().includes(kw) &&
@@ -220,21 +225,13 @@ export function FilterPanel() {
                 !(r.address || "").toLowerCase().includes(kw)
               )
                 return false;
-              if (
-                filter.township &&
-                twDim &&
-                dimValue(r as Record<string, unknown>, twDim) !== filter.township
-              )
+              if (township && twDim && dimValue(r as Record<string, unknown>, twDim) !== township)
                 return false;
-              if (
-                filter.level &&
-                lvDim &&
-                dimValue(r as Record<string, unknown>, lvDim) !== filter.level
-              )
+              if (level && lvDim && dimValue(r as Record<string, unknown>, lvDim) !== level)
                 return false;
-              if (filter.cond && r.condition_level !== filter.cond) return false;
-              if (filter.threeD === "1" && !r.has_3d) return false;
-              if (filter.threeD === "0" && r.has_3d) return false;
+              if (cond && r.condition_level !== cond) return false;
+              if (threeD === "1" && !r.has_3d) return false;
+              if (threeD === "0" && r.has_3d) return false;
               return true;
             })
             .slice(0, 50)

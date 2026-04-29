@@ -45,14 +45,18 @@ export class PointRenderer {
   }
 
   destroy() {
-    this.clickHandler.destroy();
-    if (!this.viewer.isDestroyed()) {
-      try {
+    try {
+      this.clickHandler.destroy();
+    } catch {
+      /* viewer 可能已销毁,handler 也跟着失效 */
+    }
+    try {
+      if (!this.viewer.isDestroyed()) {
         this.viewer.scene.primitives.remove(this.points);
         this.viewer.scene.primitives.remove(this.labels);
-      } catch {
-        /* ignore */
       }
+    } catch {
+      /* viewer 已销毁,忽略 */
     }
   }
 

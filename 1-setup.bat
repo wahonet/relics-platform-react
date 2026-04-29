@@ -83,8 +83,9 @@ echo        data\input\02_worklogs\      -- 放工作日志 Excel      ^(可选^
 echo        data\input\03_boundaries\    -- 放行政边界 Shapefile/GeoJSON
 echo        data\input\04_dem\           -- 放 DEM GeoTIFF        ^(可选^)
 echo        data\input\05_models_3d\     -- 放 3D Tiles           ^(可选^)
-echo   3. 双击 run_pipeline.bat  运行数据管线生成结构化数据
-echo   4. 双击 start_platform.bat 启动 WebGIS 平台
+echo   3. 双击 2-pipeline.bat   运行数据管线生成结构化数据
+echo   4. 双击 3-build.bat      构建前端 (Vue 后台 + React 主前端)
+echo   5. 双击 4-start.bat      启动 WebGIS 平台
 echo.
 pause
 endlocal

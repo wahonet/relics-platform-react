@@ -15,7 +15,20 @@ const BASE_OPTIONS: { value: BaseLayerType; label: string }[] = [
 ];
 
 export function Toolbar() {
-  const ui = useUIStore();
+  // 单独订阅以避免对整个 ui store 的全量订阅触发不必要的重渲染。
+  const filterPanelOpen = useUIStore((s) => s.filterPanelOpen);
+  const tileDownloadOpen = useUIStore((s) => s.tileDownloadOpen);
+  const baseLayer = useUIStore((s) => s.baseLayer);
+  const baseLayerAlpha = useUIStore((s) => s.baseLayerAlpha);
+  const terrainEnabled = useUIStore((s) => s.terrainEnabled);
+  const bndCounty = useUIStore((s) => s.bndCounty);
+  const bndTownship = useUIStore((s) => s.bndTownship);
+  const bndVillage = useUIStore((s) => s.bndVillage);
+  const bndVillageName = useUIStore((s) => s.bndVillageName);
+  const toastObj = useUIStore((s) => s.toast);
+  const setUI = useUIStore((s) => s.set);
+  const showToast = useUIStore((s) => s.showToast);
+
   const filteredCount = useFilterStore((s) => s.activeCats.size);
   const allCount = useRelicsStore((s) => s.all.length);
 
@@ -39,12 +52,12 @@ export function Toolbar() {
   }, []);
 
   const baseLabel =
-    BASE_OPTIONS.find((o) => o.value === ui.baseLayer)?.label || "底图影像";
+    BASE_OPTIONS.find((o) => o.value === baseLayer)?.label || "底图影像";
 
   const onReset = () => {
     const cats = useRelicsStore.getState().all.map((r) => r.category_main || "");
     useFilterStore.getState().reset(new Set(cats.filter(Boolean)));
-    ui.set({
+    setUI({
       filterPanelOpen: false,
       routePanelOpen: false,
       chatPanelOpen: false,
@@ -53,7 +66,7 @@ export function Toolbar() {
     });
     flyHomeFn(getViewer());
     setTimeout(() => flyHomeFn(getViewer()), 50);
-    ui.showToast("已重置筛选并飞回主视角");
+    showToast("已重置筛选并飞回主视角");
   };
 
   const onFullscreen = () => {
@@ -65,8 +78,8 @@ export function Toolbar() {
     <div className="toolbar">
       <div className="tb-group boxed">
         <button
-          className={"tb" + (ui.filterPanelOpen ? " on" : "")}
-          onClick={() => ui.set({ filterPanelOpen: !ui.filterPanelOpen })}
+          className={"tb" + (filterPanelOpen ? " on" : "")}
+          onClick={() => setUI({ filterPanelOpen: !filterPanelOpen })}
           title="筛选面板"
         >
           <svg viewBox="0 0 24 24">
@@ -97,10 +110,10 @@ export function Toolbar() {
                 <div
                   key={opt.value}
                   className={
-                    "dropdown-item" + (ui.baseLayer === opt.value ? " on" : "")
+                    "dropdown-item" + (baseLayer === opt.value ? " on" : "")
                   }
                   onClick={() => {
-                    ui.set({ baseLayer: opt.value });
+                    setUI({ baseLayer: opt.value });
                     setBaseMenuOpen(false);
                   }}
                 >
@@ -108,21 +121,21 @@ export function Toolbar() {
                 </div>
               ))}
               <div className="dropdown-divider" />
-              <div className="dropdown-group">底图透明度: {ui.baseLayerAlpha}%</div>
+              <div className="dropdown-group">底图透明度: {baseLayerAlpha}%</div>
               <input
                 type="range"
                 min={20}
                 max={100}
-                value={ui.baseLayerAlpha}
-                onChange={(e) => ui.set({ baseLayerAlpha: Number(e.target.value) })}
+                value={baseLayerAlpha}
+                onChange={(e) => setUI({ baseLayerAlpha: Number(e.target.value) })}
                 style={{ width: "calc(100% - 16px)", margin: "4px 8px" }}
               />
             </div>
           )}
         </div>
         <button
-          className={"tb" + (ui.tileDownloadOpen ? " on" : "")}
-          onClick={() => ui.set({ tileDownloadOpen: !ui.tileDownloadOpen })}
+          className={"tb" + (tileDownloadOpen ? " on" : "")}
+          onClick={() => setUI({ tileDownloadOpen: !tileDownloadOpen })}
         >
           <svg viewBox="0 0 24 24">
             <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
@@ -150,32 +163,32 @@ export function Toolbar() {
               <label className="dropdown-item">
                 <input
                   type="checkbox"
-                  checked={ui.bndCounty}
-                  onChange={(e) => ui.set({ bndCounty: e.target.checked })}
+                  checked={bndCounty}
+                  onChange={(e) => setUI({ bndCounty: e.target.checked })}
                 />{" "}
                 县界
               </label>
               <label className="dropdown-item">
                 <input
                   type="checkbox"
-                  checked={ui.bndTownship}
-                  onChange={(e) => ui.set({ bndTownship: e.target.checked })}
+                  checked={bndTownship}
+                  onChange={(e) => setUI({ bndTownship: e.target.checked })}
                 />{" "}
                 镇界 / 镇名
               </label>
               <label className="dropdown-item">
                 <input
                   type="checkbox"
-                  checked={ui.bndVillage}
-                  onChange={(e) => ui.set({ bndVillage: e.target.checked })}
+                  checked={bndVillage}
+                  onChange={(e) => setUI({ bndVillage: e.target.checked })}
                 />{" "}
                 村界
               </label>
               <label className="dropdown-item">
                 <input
                   type="checkbox"
-                  checked={ui.bndVillageName}
-                  onChange={(e) => ui.set({ bndVillageName: e.target.checked })}
+                  checked={bndVillageName}
+                  onChange={(e) => setUI({ bndVillageName: e.target.checked })}
                 />{" "}
                 村名
               </label>
@@ -184,18 +197,18 @@ export function Toolbar() {
         </div>
 
         <button
-          className={"tb" + (ui.terrainEnabled ? " on" : "")}
-          onClick={() => ui.set({ terrainEnabled: !ui.terrainEnabled })}
+          className={"tb" + (terrainEnabled ? " on" : "")}
+          onClick={() => setUI({ terrainEnabled: !terrainEnabled })}
         >
           <svg viewBox="0 0 24 24">
             <path d="M14 6l-3.75 5L8 8.5 3 15h18z" />
           </svg>
-          {ui.terrainEnabled ? "地形 ✓" : "地形"}
+          {terrainEnabled ? "地形 ✓" : "地形"}
         </button>
       </div>
 
       <div className="status-summary">
-        当前位置: {ui.toast?.text || `全部文物 ${allCount} 处`}
+        当前位置: {toastObj?.text || `全部文物 ${allCount} 处`}
       </div>
 
       <div className="tb-group" style={{ marginLeft: "auto" }}>
