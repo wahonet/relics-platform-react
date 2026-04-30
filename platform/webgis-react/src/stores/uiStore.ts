@@ -31,8 +31,12 @@ interface UIState {
 
   toast: { id: number; text: string } | null;
 
-  set: (patch: Partial<Omit<UIState, "set" | "showToast">>) => void;
+  /** 单调递增的"离线覆盖刷新"信号。下载完成后 +1,MapView 监听刷新红框。 */
+  offlineCoverageTick: number;
+
+  set: (patch: Partial<Omit<UIState, "set" | "showToast" | "bumpOfflineCoverage">>) => void;
   showToast: (text: string) => void;
+  bumpOfflineCoverage: () => void;
 }
 
 let toastSeq = 0;
@@ -68,6 +72,8 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   toast: null,
 
+  offlineCoverageTick: 0,
+
   set(patch) {
     set(patch);
   },
@@ -78,5 +84,8 @@ export const useUIStore = create<UIState>((set, get) => ({
       const cur = get().toast;
       if (cur && cur.text === text) set({ toast: null });
     }, 2200);
+  },
+  bumpOfflineCoverage() {
+    set({ offlineCoverageTick: get().offlineCoverageTick + 1 });
   },
 }));

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as Cesium from "cesium";
 import { useUIStore } from "../stores/uiStore";
+import { useHomeViewStore } from "../stores/homeViewStore";
 import {
   clearCache,
   estimateArea,
@@ -11,7 +12,7 @@ import {
   type TileDownloadProgress,
   type TileHistoryItem,
 } from "../api/tiles";
-import { getViewer } from "../map/viewerRegistry";
+import { flyTo, getViewer } from "../map/viewerRegistry";
 
 const ZOOMS = "12,13,14,15";
 const PROVIDERS_DEFAULT = "arcgis_sat";
@@ -50,9 +51,18 @@ function fmtBytes(n: number): string {
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
+/** 给定 bbox,估算合适的相机高度 (m),让 bbox 全部进入视口。 */
+function altitudeForBbox(bbox: [number, number, number, number]): number {
+  const [w, s, e, n] = bbox;
+  const dx = (e - w) * 111000;
+  const dy = (n - s) * 111000;
+  return Math.max(8000, Math.min(300000, Math.max(dx, dy) * 1.5));
+}
+
 export function TileDownloadPanel() {
   const open = useUIStore((s) => s.tileDownloadOpen);
   const setUI = useUIStore((s) => s.set);
+  const setHomeView = useHomeViewStore((s) => s.setView);
 
   const [mode, setMode] = useState<"bbox" | "county">("bbox");
   const [providers, setProviders] = useState(PROVIDERS_DEFAULT);
@@ -242,9 +252,39 @@ export function TileDownloadPanel() {
           if (p.status === "running") {
             setTimeout(poll, 1500);
           } else {
-            useUIStore.getState().showToast(`下载完成: ${p.downloaded} 张, 失败 ${p.failed}`);
+            // 下载完成,刷新历史 + 通知 MapView 重画离线红框,并询问是否飞过去。
             const h = await fetchHistory(20);
             setHistory(h.items || []);
+            useUIStore.getState().bumpOfflineCoverage();
+
+            const bboxArr = (p.bbox && p.bbox.length === 4
+              ? (p.bbox as [number, number, number, number])
+              : currentBbox) as [number, number, number, number] | null;
+            const labelText = labelStr || (bboxArr ? `bbox ${bboxArr.map((x) => x.toFixed(2)).join(", ")}` : "");
+            const sizeMB = (p.bytes / 1024 / 1024).toFixed(1);
+            const msg =
+              `已下载 ${p.downloaded} 张瓦片 (${sizeMB} MB)\n` +
+              `覆盖区域: ${labelText}\n\n` +
+              `是否飞到该区域并设为主视角?`;
+
+            if (bboxArr && window.confirm(msg)) {
+              const cx = (bboxArr[0] + bboxArr[2]) / 2;
+              const cy = (bboxArr[1] + bboxArr[3]) / 2;
+              const h2 = altitudeForBbox(bboxArr);
+              setHomeView({
+                lng: cx,
+                lat: cy,
+                h: h2,
+                city: undefined,
+                county: labelStr || undefined,
+              });
+              flyTo(cx, cy, h2, 1.5);
+              useUIStore.getState().showToast("已飞到下载区域并设为主视角");
+              // 关闭面板,让用户能立即看见地图。
+              setUI({ tileDownloadOpen: false });
+            } else {
+              useUIStore.getState().showToast(`下载完成: ${p.downloaded} 张, 失败 ${p.failed}`);
+            }
           }
         } catch {
           /* ignore */

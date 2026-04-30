@@ -6,6 +6,7 @@ import { setTerrainEnabled } from "./terrain";
 import { PointRenderer } from "./PointRenderer";
 import { ViewportManager } from "./ViewportManager";
 import { BoundaryLayer } from "./BoundaryLayer";
+import { OfflineCoverageLayer } from "./OfflineCoverageLayer";
 import { useUIStore } from "../stores/uiStore";
 import { useFilterStore } from "../stores/filterStore";
 import { useRelicsStore } from "../stores/relicsStore";
@@ -24,6 +25,7 @@ export function MapView({ onCompassRotate, onScaleUpdate }: MapViewProps) {
   const pointRendererRef = useRef<PointRenderer | null>(null);
   const viewportRef = useRef<ViewportManager | null>(null);
   const boundaryRef = useRef<BoundaryLayer | null>(null);
+  const offlineCoverageRef = useRef<OfflineCoverageLayer | null>(null);
 
   const baseLayer = useUIStore((s) => s.baseLayer);
   const baseLayerAlpha = useUIStore((s) => s.baseLayerAlpha);
@@ -42,6 +44,7 @@ export function MapView({ onCompassRotate, onScaleUpdate }: MapViewProps) {
   const filterStatFilters = useFilterStore((s) => s.statFilters);
 
   const homeView = useHomeViewStore((s) => s.view);
+  const offlineTick = useUIStore((s) => s.offlineCoverageTick);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -49,10 +52,12 @@ export function MapView({ onCompassRotate, onScaleUpdate }: MapViewProps) {
     const renderer = new PointRenderer(viewer);
     const viewport = new ViewportManager(viewer, renderer);
     const boundary = new BoundaryLayer(viewer);
+    const offlineCoverage = new OfflineCoverageLayer(viewer);
 
     pointRendererRef.current = renderer;
     viewportRef.current = viewport;
     boundaryRef.current = boundary;
+    offlineCoverageRef.current = offlineCoverage;
 
     renderer.setOnPick(async (code: string) => {
       try {
@@ -134,9 +139,15 @@ export function MapView({ onCompassRotate, onScaleUpdate }: MapViewProps) {
       }
       viewport.stop();
       renderer.destroy();
+      try {
+        offlineCoverage.clear();
+      } catch {
+        /* ignore */
+      }
       pointRendererRef.current = null;
       viewportRef.current = null;
       boundaryRef.current = null;
+      offlineCoverageRef.current = null;
     };
   }, [viewerRef, onCompassRotate, onScaleUpdate, setUI]);
 
@@ -144,8 +155,22 @@ export function MapView({ onCompassRotate, onScaleUpdate }: MapViewProps) {
     const viewer = viewerRef.current;
     if (!viewer) return;
     applyBaseLayer(viewer, baseLayer, baseLayerAlpha);
+
+    // 切到"离线影像 / 离线矢量"时,把已下载区域的 bbox 用红框标识在地图上,
+    // 让用户一眼看到能滑过去的区域;切到其它底图时清掉。
+    const cov = offlineCoverageRef.current;
+    if (!cov) return;
+    if (baseLayer === "arcgis_sat" || baseLayer === "osm") {
+      cov.refresh().then((n) => {
+        if (n > 0) {
+          useUIStore.getState().showToast(`已加载 ${n} 个离线下载区域 (红色框)`);
+        }
+      });
+    } else {
+      cov.clear();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewerRef, baseLayer]);
+  }, [viewerRef, baseLayer, offlineTick]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
