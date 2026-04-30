@@ -16,12 +16,17 @@ import { getViewer } from "../map/viewerRegistry";
 const ZOOMS = "12,13,14,15";
 const PROVIDERS_DEFAULT = "arcgis_sat";
 
+interface CountyEntry {
+  bbox?: [number, number, number, number];
+  center?: [number, number];
+}
+interface CityEntry {
+  bbox?: [number, number, number, number];
+  center?: [number, number];
+  counties?: Record<string, CountyEntry>;
+}
 interface ShandongAdmin {
-  cities: {
-    name: string;
-    bbox?: [number, number, number, number];
-    counties: { name: string; bbox?: [number, number, number, number] }[];
-  }[];
+  cities: Record<string, CityEntry>;
 }
 
 let _shandongAdminCache: ShandongAdmin | null = null;
@@ -75,14 +80,15 @@ export function TileDownloadPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const cities = admin?.cities || [];
-  const cityObj = cities.find((c) => c.name === city);
-  const counties = cityObj?.counties || [];
+  const citiesObj = admin?.cities || {};
+  const cityNames = Object.keys(citiesObj);
+  const cityObj = city ? citiesObj[city] : undefined;
+  const countyNames = cityObj?.counties ? Object.keys(cityObj.counties) : [];
 
   const bboxFromAdmin = (): [number, number, number, number] | null => {
     if (!cityObj) return null;
-    if (county) {
-      const co = cityObj.counties.find((x) => x.name === county);
+    if (county && cityObj.counties) {
+      const co = cityObj.counties[county];
       if (co?.bbox) return co.bbox;
     }
     return cityObj.bbox || null;
@@ -291,9 +297,9 @@ export function TileDownloadPanel() {
                 <label>地市</label>
                 <select value={city} onChange={(e) => setCity(e.target.value)}>
                   <option value="">请选择...</option>
-                  {cities.map((c) => (
-                    <option key={c.name} value={c.name}>
-                      {c.name}
+                  {cityNames.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
                     </option>
                   ))}
                 </select>
@@ -306,9 +312,9 @@ export function TileDownloadPanel() {
                   onChange={(e) => setCounty(e.target.value)}
                 >
                   <option value="">{city ? "请选择..." : "请先选地市"}</option>
-                  {counties.map((c) => (
-                    <option key={c.name} value={c.name}>
-                      {c.name}
+                  {countyNames.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
                     </option>
                   ))}
                 </select>

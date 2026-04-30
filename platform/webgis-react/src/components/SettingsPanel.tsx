@@ -4,17 +4,19 @@ import { useHomeViewStore } from "../stores/homeViewStore";
 import { flyTo, getViewer } from "../map/viewerRegistry";
 import * as Cesium from "cesium";
 
+interface CityEntry {
+  bbox?: [number, number, number, number];
+  center?: [number, number];
+  counties?: Record<string, CountyEntry>;
+}
+interface CountyEntry {
+  bbox?: [number, number, number, number];
+  center?: [number, number];
+}
 interface ShandongAdmin {
-  cities: {
-    name: string;
-    bbox?: [number, number, number, number];
-    center?: [number, number];
-    counties: {
-      name: string;
-      bbox?: [number, number, number, number];
-      center?: [number, number];
-    }[];
-  }[];
+  province?: string;
+  bbox?: [number, number, number, number];
+  cities: Record<string, CityEntry>;
 }
 
 let _shandongAdminCache: ShandongAdmin | null = null;
@@ -47,18 +49,19 @@ export function SettingsPanel() {
     loadShandongAdmin().then((d) => setAdmin(d));
   }, [open]);
 
-  const cities = admin?.cities || [];
-  const cityObj = cities.find((c) => c.name === city);
-  const counties = cityObj?.counties || [];
+  const citiesObj = admin?.cities || {};
+  const cityNames = Object.keys(citiesObj);
+  const cityObj = city ? citiesObj[city] : undefined;
+  const countyNames = cityObj?.counties ? Object.keys(cityObj.counties) : [];
 
   const applyHome = (cityName: string, countyName: string) => {
     if (!admin) return;
-    const co = admin.cities.find((c) => c.name === cityName);
+    const co = admin.cities[cityName];
     if (!co) return;
     let center: [number, number] | undefined = co.center;
     let bbox: [number, number, number, number] | undefined = co.bbox;
-    if (countyName) {
-      const cn = co.counties.find((x) => x.name === countyName);
+    if (countyName && co.counties) {
+      const cn = co.counties[countyName];
       if (cn) {
         center = cn.center || center;
         bbox = cn.bbox || bbox;
@@ -152,9 +155,9 @@ export function SettingsPanel() {
               onChange={(e) => onCityChange(e.target.value)}
             >
               <option value="">请选择...</option>
-              {cities.map((c) => (
-                <option key={c.name} value={c.name}>
-                  {c.name}
+              {cityNames.map((name) => (
+                <option key={name} value={name}>
+                  {name}
                 </option>
               ))}
             </select>
@@ -168,9 +171,9 @@ export function SettingsPanel() {
               onChange={(e) => onCountyChange(e.target.value)}
             >
               <option value="">{city ? "请选择..." : "请先选地市"}</option>
-              {counties.map((c) => (
-                <option key={c.name} value={c.name}>
-                  {c.name}
+              {countyNames.map((name) => (
+                <option key={name} value={name}>
+                  {name}
                 </option>
               ))}
             </select>

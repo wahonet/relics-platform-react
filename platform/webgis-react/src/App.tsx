@@ -13,6 +13,7 @@ import { Compass } from "./components/Compass";
 import { MapView } from "./map/MapView";
 import { usePlatformStore } from "./stores/platformStore";
 import { useRelicsStore } from "./stores/relicsStore";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 function App() {
   const platformLoaded = usePlatformStore((s) => s.loaded);
@@ -38,18 +39,20 @@ function App() {
 
   return (
     <>
-      <Header />
-      <Toolbar />
-      <MapView onCompassRotate={onCompassRotate} onScaleUpdate={onScaleUpdate} />
+      <ErrorBoundary label="Header"><Header /></ErrorBoundary>
+      <ErrorBoundary label="Toolbar"><Toolbar /></ErrorBoundary>
+      <ErrorBoundary label="MapView">
+        <MapView onCompassRotate={onCompassRotate} onScaleUpdate={onScaleUpdate} />
+      </ErrorBoundary>
       <Compass rotation={compassRot} scale={scale} />
 
-      <FilterPanel />
-      <Dashboard />
-      <InfoPanel />
-      <ChatPanel />
-      <WorklogPanel />
-      <SettingsPanel />
-      <TileDownloadPanel />
+      <ErrorBoundary label="FilterPanel"><FilterPanel /></ErrorBoundary>
+      <ErrorBoundary label="Dashboard"><Dashboard /></ErrorBoundary>
+      <ErrorBoundary label="InfoPanel"><InfoPanel /></ErrorBoundary>
+      <ErrorBoundary label="ChatPanel"><ChatPanel /></ErrorBoundary>
+      <ErrorBoundary label="WorklogPanel"><WorklogPanel /></ErrorBoundary>
+      <ErrorBoundary label="SettingsPanel"><SettingsPanel /></ErrorBoundary>
+      <ErrorBoundary label="TileDownloadPanel"><TileDownloadPanel /></ErrorBoundary>
 
       {(!platformLoaded || (!relicsLoaded && relicsLoading)) && (
         <div className="center-loader">

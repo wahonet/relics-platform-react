@@ -149,10 +149,13 @@ export class BoundaryLayer {
 
   async load() {
     try {
+      // 这三个文件在"纯壳子"状态下会 404,这是预期的。后端 access log 里仍会
+      // 显示 404,但前端要静默处理。
+      const swallow = (url: string) => fetch(url).catch(() => new Response(null, { status: 404 }));
       const [countyRes, townRes, villageRes] = await Promise.all([
-        fetch("/boundaries/county.geojson"),
-        fetch("/boundaries/townships.geojson"),
-        fetch("/boundaries/villages.geojson"),
+        swallow("/boundaries/county.geojson"),
+        swallow("/boundaries/townships.geojson"),
+        swallow("/boundaries/villages.geojson"),
       ]);
       if (countyRes.ok) {
         const county = await countyRes.json();
@@ -188,8 +191,8 @@ export class BoundaryLayer {
       if (villageRes.ok) {
         this.villageGeojson = await villageRes.json();
       }
-    } catch (e) {
-      console.warn("边界加载失败:", e);
+    } catch {
+      /* 没数据时静默,不打 warn */
     }
   }
 
