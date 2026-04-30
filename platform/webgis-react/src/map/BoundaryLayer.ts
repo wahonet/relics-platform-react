@@ -12,56 +12,11 @@ const COLORS = {
   village: { r: 63, g: 185, b: 80 },
 };
 
-function dpDist(p: number[], a: number[], b: number[]): number {
-  const dx = b[0] - a[0];
-  const dy = b[1] - a[1];
-  const lenSq = dx * dx + dy * dy;
-  if (lenSq === 0) return Math.hypot(p[0] - a[0], p[1] - a[1]);
-  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / lenSq));
-  return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
-}
-
-function simplifyRing(pts: number[][], eps: number): number[][] {
-  if (pts.length <= 4) return pts;
-  let maxD = 0;
-  let idx = 0;
-  for (let i = 1; i < pts.length - 1; i++) {
-    const d = dpDist(pts[i], pts[0], pts[pts.length - 1]);
-    if (d > maxD) {
-      maxD = d;
-      idx = i;
-    }
-  }
-  if (maxD > eps) {
-    const left = simplifyRing(pts.slice(0, idx + 1), eps);
-    const right = simplifyRing(pts.slice(idx), eps);
-    return left.slice(0, -1).concat(right);
-  }
-  return [pts[0], pts[pts.length - 1]];
-}
-
-function smoothRing(pts: number[][], iterations: number): number[][] {
-  let cur = pts;
-  for (let n = 0; n < iterations; n++) {
-    const next: number[][] = [cur[0]];
-    for (let i = 1; i < cur.length - 1; i++) {
-      next.push([
-        cur[i - 1][0] * 0.25 + cur[i][0] * 0.5 + cur[i + 1][0] * 0.25,
-        cur[i - 1][1] * 0.25 + cur[i][1] * 0.5 + cur[i + 1][1] * 0.25,
-      ]);
-    }
-    next.push(cur[cur.length - 1]);
-    cur = next;
-  }
-  return cur;
-}
-
-function prepareRing(ring: number[][], type: string) {
-  if (type === "village") return ring;
-  const eps = type === "county" ? 0.0001 : 0.00015;
-  const iters = type === "county" ? 3 : 2;
-  return smoothRing(simplifyRing(ring, eps), iters);
-}
+// 注意:不要在这里做抽稀 / 平滑。
+// 原本对 county / township 各自跑了一次 Douglas-Peucker + Laplacian,
+// 两层用不同参数(eps / 迭代次数), 导致原本重合的县界和镇界外缘对不上。
+// 现在一律用原始 ring, 抗锯齿交给 Cesium 自身的 FXAA / MSAA
+// (设置面板里 "高清 / 超清" 即可启用)。
 
 function ringCenter(ring: number[][]) {
   const lngs = ring.map((c) => c[0]);
@@ -76,6 +31,7 @@ export class BoundaryLayer {
   private viewer: Cesium.Viewer;
   private layers = {
     county: [] as BoundaryItem[],
+    countyLabel: [] as Cesium.Entity[],
     township: [] as BoundaryItem[],
     townLabel: [] as Cesium.Entity[],
     village: [] as BoundaryItem[],
@@ -97,8 +53,8 @@ export class BoundaryLayer {
     const c = COLORS[type as keyof typeof COLORS] || COLORS.county;
     const lineAlpha = type === "county" ? 0.9 : type === "township" ? 0.7 : 0.6;
     const lineW = type === "county" ? 2.5 * 1.3 : 2.5;
-    const smoothed = prepareRing(ring, type);
-    const positions = smoothed.map((p) => Cesium.Cartesian3.fromDegrees(p[0], p[1]));
+    // 直接用原始 ring,不做任何抽稀 / 平滑,保证与镇界共边精确重合
+    const positions = ring.map((p) => Cesium.Cartesian3.fromDegrees(p[0], p[1]));
 
     const fillOpts: Cesium.Entity.ConstructorOptions = {
       polygon: {
@@ -129,19 +85,35 @@ export class BoundaryLayer {
     return { fill, line, type };
   }
 
-  private addLabel(lng: number, lat: number, text: string, scale = 0.7, maxDist = 80000) {
+  private addLabel(
+    lng: number,
+    lat: number,
+    text: string,
+    opts: {
+      scale?: number;
+      maxDist?: number;
+      minDist?: number;
+      color?: string;
+      fontSize?: number;
+    } = {},
+  ) {
+    const scale = opts.scale ?? 0.7;
+    const maxDist = opts.maxDist ?? 80000;
+    const minDist = opts.minDist ?? 0;
+    const color = opts.color ?? "rgba(255,200,50,0.95)";
+    const fontSize = opts.fontSize ?? 18;
     return this.viewer.entities.add({
       position: Cesium.Cartesian3.fromDegrees(lng, lat),
       label: {
         text,
-        font: 'bold 18px "Microsoft YaHei", sans-serif',
-        fillColor: Cesium.Color.fromCssColorString("rgba(255,200,50,0.95)"),
+        font: `bold ${fontSize}px "Microsoft YaHei", sans-serif`,
+        fillColor: Cesium.Color.fromCssColorString(color),
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 4,
         style: Cesium.LabelStyle.FILL_AND_OUTLINE,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
         heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, maxDist),
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(minDist, maxDist),
         scale,
       },
     });
@@ -151,7 +123,10 @@ export class BoundaryLayer {
     try {
       // 这三个文件在"纯壳子"状态下会 404,这是预期的。后端 access log 里仍会
       // 显示 404,但前端要静默处理。
-      const swallow = (url: string) => fetch(url).catch(() => new Response(null, { status: 404 }));
+      // 加上时间戳避免重载时命中浏览器缓存,看不到刚下载的新数据。
+      const ts = Date.now();
+      const swallow = (url: string) =>
+        fetch(`${url}?_=${ts}`).catch(() => new Response(null, { status: 404 }));
       const [countyRes, townRes, villageRes] = await Promise.all([
         swallow("/boundaries/county.geojson"),
         swallow("/boundaries/townships.geojson"),
@@ -160,10 +135,45 @@ export class BoundaryLayer {
       if (countyRes.ok) {
         const county = await countyRes.json();
         county.features?.forEach(
-          (f: { geometry: { coordinates: number[][][] } }) => {
+          (f: {
+            properties?: Record<string, string>;
+            geometry: { coordinates: number[][][] };
+          }) => {
+            // 县名取自 DataV(name/XZQMC)或 step06 输出。一个县多边形只挂一个 label
+            // (取面积最大那个 ring 的中心),避免飞地重复显示。
+            const name =
+              f.properties?.XZQMC ||
+              f.properties?.name ||
+              f.properties?._county_name ||
+              "";
+            let mainRing: number[][] | null = null;
+            let mainArea = -1;
             f.geometry.coordinates.forEach((ring) => {
-              this.layers.county.push(this.addBoundary(ring, "county"));
+              this.layers.county.push(this.addBoundary(ring, "county", name));
+              // 用 bbox 近似面积,简单稳健,不需要球面积
+              const lngs = ring.map((p) => p[0]);
+              const lats = ring.map((p) => p[1]);
+              const area =
+                (Math.max(...lngs) - Math.min(...lngs)) *
+                (Math.max(...lats) - Math.min(...lats));
+              if (area > mainArea) {
+                mainArea = area;
+                mainRing = ring;
+              }
             });
+            if (name && mainRing) {
+              const [cx, cy] = ringCenter(mainRing);
+              this.layers.countyLabel.push(
+                this.addLabel(cx, cy, name, {
+                  scale: 0.85,
+                  fontSize: 20,
+                  // 县名远视角才有意义,近视角自动消失避免与镇名打架
+                  minDist: 30000,
+                  maxDist: 1500000,
+                  color: "rgba(255,200,50,0.95)",
+                }),
+              );
+            }
           },
         );
       }
@@ -181,7 +191,14 @@ export class BoundaryLayer {
               this.layers.township.push(this.addBoundary(ring, "township", name));
               if (name) {
                 const [cx, cy] = ringCenter(ring);
-                this.layers.townLabel.push(this.addLabel(cx, cy, name, 0.7, 80000));
+                this.layers.townLabel.push(
+                  this.addLabel(cx, cy, name, {
+                    scale: 0.7,
+                    fontSize: 18,
+                    maxDist: 80000,
+                    color: "rgba(160,200,255,0.95)",
+                  }),
+                );
               }
             });
           },
@@ -194,6 +211,15 @@ export class BoundaryLayer {
     } catch {
       /* 没数据时静默,不打 warn */
     }
+  }
+
+  private addVillageLabel(lng: number, lat: number, text: string) {
+    return this.addLabel(lng, lat, text, {
+      scale: 0.6,
+      fontSize: 16,
+      maxDist: 30000,
+      color: "rgba(180,235,180,0.95)",
+    });
   }
 
   private renderVillages() {
@@ -220,13 +246,58 @@ export class BoundaryLayer {
       const coords = f.geometry.coordinates;
       if (!coords?.length) return;
       const [cx, cy] = ringCenter(coords[0]);
-      this.layers.villageLabel.push(this.addLabel(cx, cy, name, 0.6, 30000));
+      this.layers.villageLabel.push(this.addVillageLabel(cx, cy, name));
     });
+  }
+
+  /** 删除所有已渲染的边界 entities,准备重载。 */
+  clear(): void {
+    const removeItem = (it: BoundaryItem) => {
+      try {
+        this.viewer.entities.remove(it.fill);
+        this.viewer.entities.remove(it.line);
+      } catch {
+        /* ignore */
+      }
+    };
+    this.layers.county.forEach(removeItem);
+    this.layers.township.forEach(removeItem);
+    this.layers.village.forEach(removeItem);
+    [
+      ...this.layers.countyLabel,
+      ...this.layers.townLabel,
+      ...this.layers.villageLabel,
+    ].forEach((e) => {
+      try {
+        this.viewer.entities.remove(e);
+      } catch {
+        /* ignore */
+      }
+    });
+    this.layers = {
+      county: [],
+      countyLabel: [],
+      township: [],
+      townLabel: [],
+      village: [],
+      villageLabel: [],
+    };
+    this.villageGeojson = null;
+    this.townshipNames = [];
+    this.viewer.scene.requestRender();
+  }
+
+  /** 删除当前并重新拉取 /boundaries/*.geojson。 */
+  async reload(): Promise<void> {
+    this.clear();
+    await this.load();
   }
 
   setVisibility(opts: {
     county: boolean;
+    countyName: boolean;
     township: boolean;
+    townshipName: boolean;
     village: boolean;
     villageName: boolean;
   }) {
@@ -234,11 +305,13 @@ export class BoundaryLayer {
       it.fill.show = opts.county;
       it.line.show = opts.county;
     });
+    this.layers.countyLabel.forEach((e) => (e.show = opts.countyName));
+
     this.layers.township.forEach((it) => {
       it.fill.show = opts.township;
       it.line.show = opts.township;
     });
-    this.layers.townLabel.forEach((e) => (e.show = opts.township));
+    this.layers.townLabel.forEach((e) => (e.show = opts.townshipName));
 
     if (opts.village && this.layers.village.length === 0) this.renderVillages();
     this.layers.village.forEach((it) => {

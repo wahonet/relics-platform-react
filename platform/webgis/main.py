@@ -30,8 +30,9 @@ from starlette.concurrency import run_in_threadpool  # noqa: E402
 from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
 
 from _common import PROJECT_ROOT, detect_features, get_paths, load_config  # noqa: E402
+import crs as _crs_lib  # noqa: E402
 from data_loader import store  # noqa: E402
-from routers import admin, chat, relics, stats, survey_routes, worklog  # noqa: E402
+from routers import admin, boundaries as _boundaries, chat, crs as _crs, relics, stats, survey_routes, worklog  # noqa: E402
 from terrain_provider import get_tile_heights_fast, load_dem  # noqa: E402
 
 # 瓦片缺省兜底:256x256 全透明 PNG。
@@ -101,6 +102,17 @@ async def lifespan(app: FastAPI):
     global _CONFIG, _FEATURES
     _CONFIG = load_config()
     _FEATURES = detect_features().as_dict
+
+    # 注入 CGCS2000 ↔ WGS84 Helmert 参数 (config.yaml: geo.cgcs2000.helmert_params)
+    try:
+        hp = ((_CONFIG.get("geo") or {}).get("cgcs2000") or {}).get("helmert_params")
+        if hp:
+            _crs_lib.set_helmert_params(hp)
+            print(f"[启动] CGCS2000 7参 Helmert 已启用: {hp}")
+        else:
+            print("[启动] CGCS2000 ↔ WGS84 走 identity 近似 (米级精度)")
+    except Exception as e:
+        print(f"[启动] Helmert 参数注入失败,回退 identity: {e}")
 
     geo = _CONFIG.get("geo") or {}
     bounds = geo.get("bounds") or {}
@@ -182,7 +194,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if any(path == p or path.startswith(p) for p in _PUBLIC_PREFIXES):
             return await call_next(request)
         if request.cookies.get("session") != "authenticated":
-            return RedirectResponse(url="/login", status_code=302)
+            # 把当前完整 URL(含 query)塞进 ?next=,登录成功后回跳。
+            from urllib.parse import quote
+            target = path
+            if request.url.query:
+                target = f"{path}?{request.url.query}"
+            login_url = f"/login?next={quote(target, safe='/?&=#')}"
+            return RedirectResponse(url=login_url, status_code=302)
         return await call_next(request)
 
 
@@ -199,6 +217,8 @@ app.include_router(chat.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(survey_routes.router, prefix="/api")
 app.include_router(worklog.router, prefix="/api")
+app.include_router(_boundaries.router, prefix="/api")
+app.include_router(_crs.router, prefix="/api")
 
 
 @app.get("/api/platform/config")
@@ -251,6 +271,13 @@ async def platform_config() -> JSONResponse:
         "stats": {
             "relics_total": len(store.relics),
             "has_3d_count": sum(1 for r in store.relics if r.get("has_3d")),
+        },
+        "admin_ui": {
+            "available": _ADMIN_VUE_DIST.exists() and (_ADMIN_VUE_DIST / "index.html").exists(),
+            "url": "/admin-ui/",
+        },
+        "auth": {
+            "enabled": bool((cfg.get("server") or {}).get("enable_auth", False)),
         },
     })
 
@@ -795,17 +822,25 @@ async def open_cache_folder():
 
 
 @app.post("/api/tiles/clear-cache")
-async def clear_cache(providers: str = ""):
-    """清空指定 provider(逗号分隔;空值清空全部)的磁盘 + 内存缓存。"""
+async def clear_cache(providers: str = "", clear_history: bool = True):
+    """清空指定 provider(逗号分隔;空值清空全部)的磁盘 + 内存缓存。
+
+    clear_history:
+        - True (默认): 同步重写 _download_history.jsonl,只保留 bbox 仍有任何
+          provider 实际命中(即对应 prov_dir 还存在)的记录。这样前端"离线影像"
+          模式下的红色覆盖框会自动消失。
+        - 全清(providers="")时直接删除整张历史。
+    """
     import shutil
 
     target_names = [p.strip() for p in providers.split(",") if p.strip()] if providers else None
+    clear_all = target_names is None
 
     removed: dict[str, int] = {}
-    if not TILE_CACHE_DIR.exists():
-        return {"cleared": removed}
 
-    def _do():
+    def _do_remove():
+        if not TILE_CACHE_DIR.exists():
+            return
         for prov_dir in list(TILE_CACHE_DIR.iterdir()):
             if not prov_dir.is_dir():
                 continue
@@ -819,9 +854,40 @@ async def clear_cache(providers: str = ""):
                 removed[prov_dir.name] = -1
                 print(f"[tile] 清缓存失败 {prov_dir}: {e}")
 
-    await run_in_threadpool(_do)
+    def _do_history():
+        if not clear_history or not DOWNLOAD_HISTORY_FILE.exists():
+            return
+        if clear_all:
+            try:
+                DOWNLOAD_HISTORY_FILE.unlink()
+            except Exception as e:
+                print(f"[tile] 清历史失败: {e}")
+            return
+        # 只清掉 providers 与已删 prov_dir 有交集的条目
+        try:
+            kept: list[str] = []
+            with DOWNLOAD_HISTORY_FILE.open("r", encoding="utf-8") as f:
+                for line in f:
+                    s = line.strip()
+                    if not s:
+                        continue
+                    try:
+                        obj = json.loads(s)
+                    except Exception:
+                        kept.append(line if line.endswith("\n") else line + "\n")
+                        continue
+                    provs = obj.get("providers") or []
+                    if any(p in (target_names or []) for p in provs):
+                        continue  # drop
+                    kept.append(line if line.endswith("\n") else line + "\n")
+            DOWNLOAD_HISTORY_FILE.write_text("".join(kept), encoding="utf-8")
+        except Exception as e:
+            print(f"[tile] 重写历史失败: {e}")
+
+    await run_in_threadpool(_do_remove)
+    await run_in_threadpool(_do_history)
     TILE_MEM_CACHE.clear()
-    return {"cleared": removed}
+    return {"cleared": removed, "history_cleared": clear_history}
 
 
 def _mount_if_exists(path_prefix: str, directory: Path, name: str, *, create: bool = False) -> None:
@@ -906,6 +972,13 @@ def _bootstrap_script() -> str:
         "cesium_ion_token": cesium_token,
         "stats": {
             "relics_total": len(store.relics),
+        },
+        "admin_ui": {
+            "available": _ADMIN_VUE_DIST.exists() and (_ADMIN_VUE_DIST / "index.html").exists(),
+            "url": "/admin-ui/",
+        },
+        "auth": {
+            "enabled": bool((_CONFIG.get("server") or {}).get("enable_auth", False)),
         },
     }
     js_payload = _json.dumps(payload, ensure_ascii=False)
@@ -1000,9 +1073,16 @@ class _LoginBody(BaseModel):
 
 
 @app.get("/login", response_class=HTMLResponse)
-async def login_page():
+async def login_page(request: Request):
     if _react_build_exists():
-        return RedirectResponse(url="/app/#/login", status_code=302)
+        # 把 ?next= 透传给 React 端,LoginPage 登录成功后会跳转过去。
+        nxt = request.query_params.get("next") or ""
+        if nxt:
+            from urllib.parse import quote
+            target = f"/app/#/login?next={quote(nxt, safe='/?&=#')}"
+        else:
+            target = "/app/#/login"
+        return RedirectResponse(url=target, status_code=302)
     return HTMLResponse(_render_template("login.html"))
 
 

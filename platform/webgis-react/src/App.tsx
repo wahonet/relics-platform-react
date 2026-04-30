@@ -8,6 +8,10 @@ import { ChatPanel } from "./components/ChatPanel";
 import { WorklogPanel } from "./components/WorklogPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { TileDownloadPanel } from "./components/TileDownloadPanel";
+import { BoundaryDownloadPanel } from "./components/BoundaryDownloadPanel";
+import { CoordReadout } from "./components/CoordReadout";
+import { CoordReadoutRestore } from "./components/CoordReadoutRestore";
+import { CrsInspectorPanel } from "./components/CrsInspectorPanel";
 import { Toast } from "./components/Toast";
 import { Compass } from "./components/Compass";
 import { MapView } from "./map/MapView";
@@ -53,6 +57,10 @@ function App() {
       <ErrorBoundary label="WorklogPanel"><WorklogPanel /></ErrorBoundary>
       <ErrorBoundary label="SettingsPanel"><SettingsPanel /></ErrorBoundary>
       <ErrorBoundary label="TileDownloadPanel"><TileDownloadPanel /></ErrorBoundary>
+      <ErrorBoundary label="BoundaryDownloadPanel"><BoundaryDownloadPanel /></ErrorBoundary>
+      <ErrorBoundary label="CoordReadout"><CoordReadout /></ErrorBoundary>
+      <ErrorBoundary label="CoordReadoutRestore"><CoordReadoutRestore /></ErrorBoundary>
+      <ErrorBoundary label="CrsInspectorPanel"><CrsInspectorPanel /></ErrorBoundary>
 
       {(!platformLoaded || (!relicsLoaded && relicsLoading)) && (
         <div className="center-loader">

@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import * as Cesium from "cesium";
 import { setViewer } from "./viewerRegistry";
+import { useUIStore } from "../stores/uiStore";
+import { applyRenderQuality } from "./renderQuality";
 
 let _initedToken = false;
 
@@ -32,9 +34,15 @@ export function useCesiumViewer(containerRef: React.RefObject<HTMLDivElement>) {
 
     viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#0d1117");
     viewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#0d1117");
-    viewer.scene.postProcessStages.fxaa.enabled = true;
     viewer.scene.requestRenderMode = true;
     viewer.scene.maximumRenderTimeChange = 0.5;
+    // 按已持久化的渲染质量初始化(MSAA / FXAA / resolutionScale / SSE 一并设置)
+    try {
+      applyRenderQuality(viewer, useUIStore.getState().renderQuality);
+    } catch {
+      // 兜底:即使应用失败也至少打开 FXAA,避免锯齿
+      viewer.scene.postProcessStages.fxaa.enabled = true;
+    }
     viewer.scene.fog.enabled = false;
     viewer.scene.globe.showGroundAtmosphere = false;
     if (viewer.scene.skyAtmosphere) {

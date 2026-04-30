@@ -8,6 +8,15 @@ export function Header() {
   const has3d = config?.stats?.has_3d_count ?? 0;
   const has3dEnabled = config?.features?.models_3d ?? false;
   const aiEnabled = config?.features?.ai_chat ?? false;
+  const adminUrl = config?.admin_ui?.available ? config.admin_ui.url : "";
+
+  const goAdmin = () => {
+    if (!adminUrl) return;
+    // 后台是另一套独立的 Vue SPA,在新标签打开,保持当前主前端会话不动。
+    // 服务端的 AuthMiddleware 会自动处理鉴权:未登录 → /login?next=/admin-ui/ →
+    // /app/#/login?next=/admin-ui/ → 登录成功后 LoginPage 回跳到 /admin-ui/。
+    window.open(adminUrl, "_blank", "noopener,noreferrer");
+  };
 
   return (
     <div className="header">
@@ -36,6 +45,18 @@ export function Header() {
               <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z" />
             </svg>
             AI 助手
+          </button>
+        ) : null}
+        {adminUrl ? (
+          <button
+            className="tb"
+            onClick={goAdmin}
+            title="打开数据管理后台 (新标签)"
+          >
+            <svg viewBox="0 0 24 24">
+              <path d="M3 5h8v6H3V5zm10 0h8v3h-8V5zm0 5h8v9h-8v-9zM3 13h8v6H3v-6z" />
+            </svg>
+            后台管理
           </button>
         ) : null}
         <button

@@ -22,7 +22,9 @@ export function Toolbar() {
   const baseLayerAlpha = useUIStore((s) => s.baseLayerAlpha);
   const terrainEnabled = useUIStore((s) => s.terrainEnabled);
   const bndCounty = useUIStore((s) => s.bndCounty);
+  const bndCountyName = useUIStore((s) => s.bndCountyName);
   const bndTownship = useUIStore((s) => s.bndTownship);
+  const bndTownshipName = useUIStore((s) => s.bndTownshipName);
   const bndVillage = useUIStore((s) => s.bndVillage);
   const bndVillageName = useUIStore((s) => s.bndVillageName);
   const toastObj = useUIStore((s) => s.toast);
@@ -171,10 +173,26 @@ export function Toolbar() {
               <label className="dropdown-item">
                 <input
                   type="checkbox"
+                  checked={bndCountyName}
+                  onChange={(e) => setUI({ bndCountyName: e.target.checked })}
+                />{" "}
+                县名
+              </label>
+              <label className="dropdown-item">
+                <input
+                  type="checkbox"
                   checked={bndTownship}
                   onChange={(e) => setUI({ bndTownship: e.target.checked })}
                 />{" "}
-                镇界 / 镇名
+                镇界
+              </label>
+              <label className="dropdown-item">
+                <input
+                  type="checkbox"
+                  checked={bndTownshipName}
+                  onChange={(e) => setUI({ bndTownshipName: e.target.checked })}
+                />{" "}
+                镇名
               </label>
               <label className="dropdown-item">
                 <input
@@ -192,6 +210,25 @@ export function Toolbar() {
                 />{" "}
                 村名
               </label>
+              <div className="dropdown-divider" />
+              <div
+                className="dropdown-item"
+                onClick={() => {
+                  setUI({ boundaryDownloadOpen: true });
+                  setBoundaryMenuOpen(false);
+                }}
+                style={{ color: "var(--accent)", fontWeight: 500 }}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="14"
+                  height="14"
+                  style={{ verticalAlign: "middle", marginRight: 6, fill: "currentColor" }}
+                >
+                  <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+                </svg>
+                下载边界…
+              </div>
             </div>
           )}
         </div>

@@ -55,6 +55,12 @@ if not exist "platform\webgis-react\dist\index.html" (
     echo.
 )
 
+REM -- bypass system proxy for map/boundary upstreams --
+REM   有的代理软件 (如 Clash) 会把 DataV / Overpass / 瓦片服务的 SSL 握手 reset。
+REM   仅对这些固定上游绕开代理,其它域名 (如 AI Chat) 仍走系统代理。
+set "NO_PROXY=geo.datav.aliyun.com,overpass-api.de,overpass.kumi.systems,overpass.openstreetmap.fr,overpass.osm.ch,tile.openstreetmap.org,server.arcgisonline.com,wprd01.is.autonavi.com,wprd02.is.autonavi.com,wprd03.is.autonavi.com,wprd04.is.autonavi.com,webst01.is.autonavi.com,webst02.is.autonavi.com,webst03.is.autonavi.com,webst04.is.autonavi.com,127.0.0.1,localhost"
+set "no_proxy=%NO_PROXY%"
+
 REM -- start (host/port read from config.yaml; serve.py opens the browser) --
 set "PYTHONIOENCODING=utf-8"
 %PYTHON% platform\webgis\serve.py

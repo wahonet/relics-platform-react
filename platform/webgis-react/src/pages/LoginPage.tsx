@@ -13,8 +13,20 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       await login(username, password);
-      location.hash = "/";
-      location.reload();
+      // 支持 ?next=/admin-ui/ 这类回跳:hash 路由形式 #/login?next=...
+      // 同时兼容 query string 形式 ?next=...
+      const hash = location.hash || "";
+      const qIdx = hash.indexOf("?");
+      const hashQS = qIdx >= 0 ? hash.slice(qIdx + 1) : "";
+      const qs = new URLSearchParams(hashQS || location.search.replace(/^\?/, ""));
+      const next = qs.get("next") || "";
+      if (next && /^\/[a-zA-Z0-9/_\-?&=#%.]*$/.test(next)) {
+        // 跳出 SPA hash 路由,直接 navigate 到后台等绝对路径
+        location.href = next;
+      } else {
+        location.hash = "/";
+        location.reload();
+      }
     } catch (err) {
       const msg =
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

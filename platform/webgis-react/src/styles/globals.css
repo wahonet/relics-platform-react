@@ -366,6 +366,41 @@ a { color: var(--accent); text-decoration: none; }
 .sp-button.primary:hover { background: var(--accent2); }
 .sp-section select { width: 100%; height: 32px; background: var(--bg3); border: 1px solid var(--bd); border-radius: 5px; color: var(--t2); padding: 0 8px; font-size: 13px; }
 
+/* Dashboard 模块配置表 */
+.dash-cfg-table { display: flex; flex-direction: column; gap: 4px; }
+.dash-cfg-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 110px;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  padding: 4px 0;
+}
+.dash-cfg-row.dash-cfg-head {
+  color: var(--t2);
+  font-size: 11px;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+}
+.dash-cfg-name { color: var(--t1); }
+.dash-cfg-segs { display: flex; gap: 0; border: 1px solid var(--bd); border-radius: 5px; overflow: hidden; }
+.sp-seg {
+  flex: 1;
+  height: 28px;
+  background: var(--bg3);
+  border: 0;
+  border-right: 1px solid var(--bd);
+  color: var(--t2);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.sp-seg:last-child { border-right: 0; }
+.sp-seg:hover { color: var(--t1); }
+.sp-seg.active { background: var(--accent); color: #fff; }
+.dash-cfg-row select { height: 28px; font-size: 12px; padding: 0 6px; }
+
 /* Tile panel */
 .tile-panel {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
@@ -443,3 +478,130 @@ a { color: var(--accent); text-decoration: none; }
 .pdf-viewer-bar button:disabled { opacity: .4; cursor: default; }
 .pdf-canvas-host { flex: 1; overflow: auto; display: flex; justify-content: center; padding: 16px; }
 .pdf-canvas-host canvas { background: #fff; box-shadow: 0 6px 24px rgba(0,0,0,.6); }
+
+/* ── 坐标读数 (底部状态条) ─────────────────────────────── */
+.coord-readout {
+  position: fixed; bottom: 8px; left: 50%; transform: translateX(-50%);
+  z-index: 800;
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 10px;
+  background: rgba(22, 27, 34, 0.92);
+  border: 1px solid var(--bd);
+  border-radius: 18px;
+  font-size: 12px; color: var(--t1);
+  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+  backdrop-filter: blur(6px);
+  user-select: none;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, .35);
+}
+.coord-readout-crs {
+  height: 22px; padding: 0 6px;
+  background: var(--bg3); border: 1px solid var(--bd); border-radius: 4px;
+  color: var(--t1); font-size: 11px; cursor: pointer;
+  font-family: inherit;
+  max-width: 160px;
+}
+.coord-readout-axes {
+  color: var(--t2); font-size: 10px;
+  border-right: 1px solid var(--bd);
+  padding-right: 8px;
+}
+.coord-readout-value {
+  min-width: 220px; text-align: left;
+  color: var(--accent2);
+  font-variant-numeric: tabular-nums;
+}
+.coord-readout-h {
+  color: var(--t2); font-size: 11px;
+  padding-left: 6px; border-left: 1px solid var(--bd);
+}
+.coord-readout-btn {
+  background: transparent; border: 1px solid var(--bd); border-radius: 4px;
+  color: var(--t2); cursor: pointer;
+  height: 22px; padding: 0 8px; font-size: 11px;
+  font-family: inherit;
+}
+.coord-readout-btn:hover { color: var(--accent); border-color: var(--bd-active); }
+
+/* 隐藏后的"恢复"按钮:固定在右下角小按钮 */
+.coord-readout-restore {
+  position: fixed; bottom: 12px; right: 12px;
+  z-index: 800;
+  height: 28px; padding: 0 12px;
+  background: rgba(22, 27, 34, 0.92);
+  border: 1px solid var(--bd);
+  border-radius: 14px;
+  color: var(--t2); font-size: 11px;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+.coord-readout-restore:hover { color: var(--accent); border-color: var(--bd-active); }
+
+/* ── CRS 检视面板 ──────────────────────────────────────── */
+.crs-inspector {
+  position: fixed; top: 80px; right: 16px;
+  z-index: 850;
+  width: 380px;
+  background: rgba(22, 27, 34, 0.97);
+  border: 1px solid var(--bd);
+  border-radius: 8px;
+  color: var(--t1);
+  font-size: 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .5);
+  backdrop-filter: blur(8px);
+  display: flex; flex-direction: column;
+  max-height: 80vh;
+}
+.crs-inspector-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--bd);
+  font-size: 13px; color: var(--accent2); font-weight: 600;
+}
+.crs-inspector-hdr button {
+  background: none; border: none; color: var(--t2);
+  font-size: 16px; cursor: pointer; padding: 0 4px;
+}
+.crs-inspector-body {
+  padding: 10px 12px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.crs-input-row {
+  display: flex; gap: 6px; align-items: center;
+  padding: 6px; background: var(--bg3); border-radius: 4px;
+  border: 1px solid var(--bd);
+}
+.crs-input-row select { flex: 0 0 130px; }
+.crs-input-row input {
+  flex: 1; min-width: 0;
+  background: var(--bg); border: 1px solid var(--bd); border-radius: 3px;
+  color: var(--t1); padding: 3px 6px; font-family: inherit;
+}
+.crs-input-row button {
+  background: var(--bg3); border: 1px solid var(--bd); color: var(--t2);
+  padding: 3px 8px; border-radius: 3px; cursor: pointer;
+  font-family: inherit; font-size: 11px;
+}
+.crs-input-row button:hover { color: var(--accent); border-color: var(--bd-active); }
+.crs-output-row {
+  display: grid; grid-template-columns: 130px 1fr auto; gap: 6px;
+  align-items: center;
+  padding: 4px 6px;
+  font-family: ui-monospace, monospace;
+  border-bottom: 1px dashed rgba(255, 255, 255, .04);
+}
+.crs-output-row .crs-name { color: var(--t2); font-size: 11px; }
+.crs-output-row .crs-val { color: var(--accent2); font-size: 11px; word-break: break-all; }
+.crs-output-row button {
+  background: transparent; border: 1px solid var(--bd);
+  color: var(--t2); padding: 1px 6px; border-radius: 3px;
+  cursor: pointer; font-size: 10px;
+}
+.crs-output-row button:hover { color: var(--accent); }
+.crs-inspector-tip {
+  font-size: 11px; color: var(--t2); line-height: 1.5;
+  padding: 4px 6px; background: rgba(88, 166, 255, .06); border-radius: 4px;
+}
+
+

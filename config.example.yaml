@@ -56,6 +56,31 @@ geo:
     central_meridian: 120.0
     is_gcj02: false
 
+  # ── 坐标系显示与转换 ─────────────────────────────────────
+  # 全平台数据内部一律 WGS-84 经纬度，下面这些只控制 UI 显示与导出转换。
+  # 默认坐标读数 CRS（屏幕底部状态条 / CRS 检视面板）：
+  #   wgs84 / cgcs2000 / cgcs2000_gk_3 / cgcs2000_gk_6 / gcj02 / bd09 / web_mercator
+  display_crs: "wgs84"
+  # 高斯-克吕格 (CGCS2000) 默认参数。前端在设置面板里可临时覆盖。
+  gauss_kruger:
+    zone_width: 3              # 3°带 (测绘行业主流) / 6°带 (老规范)
+    central_meridian: "auto"   # 数值 (如 117.0) 或 "auto" 按经度自动选带
+    zone_prefix: true          # GK 的 x 前缀是否带带号 (例 38500000.0)
+  # CGCS2000 ↔ WGS84 7 参数 (Bursa-Wolf) 变换。null 时退化为 identity 近似
+  # (米级精度,已经满足绝大多数文物 GIS 工作)。需要 cm 级精度时,在这里填
+  # 测绘行政主管部门给出的 7 参（dx,dy,dz 单位 m, rx,ry,rz 单位角秒, ds 单位 ppm）。
+  cgcs2000:
+    helmert_params: null
+    # 示例（请改成你单位的实际值）：
+    # helmert_params:
+    #   dx: 0.5
+    #   dy: -0.3
+    #   dz: 0.2
+    #   rx: 0.01
+    #   ry: 0.02
+    #   rz: -0.01
+    #   ds: 0.1
+
 # ── 行政区划 ─────────────────────────────────────────────────
 administrative:
   county_name: "演示县"

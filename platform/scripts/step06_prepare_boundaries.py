@@ -24,54 +24,21 @@
 from __future__ import annotations
 
 import json
-import math
 import sys
 from pathlib import Path
 
 import shapefile
 
 from _common import gcj02_to_wgs84, get_logger, get_paths, load_config
+from crs import gk_inverse  # 高斯-克吕格逆投影,统一从 crs.py 复用
 
 STEP_ID = "step06"
 
 
-# ── 高斯-克吕格逆投影 (CGCS2000 / WGS-84 椭球参数近似) ──────
-_A = 6378137.0
-_F = 1 / 298.257222101
-_B = _A * (1 - _F)
-_E2 = (_A ** 2 - _B ** 2) / _A ** 2
-_EP2 = (_A ** 2 - _B ** 2) / _B ** 2
-
-
 def gk_to_lonlat(x: float, y: float, central_meridian: float) -> tuple[float, float]:
-    """高斯-克吕格 → 经纬度(近似 WGS-84)。
-    `x > 1_000_000` 视为含带号("带号 + 500000 + x_local"),自动剥离。"""
-    zone = int(x / 1_000_000) if x > 1_000_000 else 0
-    x0 = x - zone * 1_000_000 - 500_000
-    y0 = y
-    mu = y0 / (_A * (1 - _E2 / 4 - 3 * _E2 ** 2 / 64 - 5 * _E2 ** 3 / 256))
-    e1 = (1 - math.sqrt(1 - _E2)) / (1 + math.sqrt(1 - _E2))
-    fp = (mu
-          + (3 * e1 / 2 - 27 * e1 ** 3 / 32) * math.sin(2 * mu)
-          + (21 * e1 ** 2 / 16 - 55 * e1 ** 4 / 32) * math.sin(4 * mu)
-          + (151 * e1 ** 3 / 96) * math.sin(6 * mu))
-    sf, cf, tf = math.sin(fp), math.cos(fp), math.tan(fp)
-    N1 = _A / math.sqrt(1 - _E2 * sf ** 2)
-    T1 = tf ** 2
-    C1 = _EP2 * cf ** 2
-    R1 = _A * (1 - _E2) / (1 - _E2 * sf ** 2) ** 1.5
-    D = x0 / N1
-    lat = fp - (N1 * tf / R1) * (
-        D ** 2 / 2
-        - (5 + 3 * T1 + 10 * C1 - 4 * C1 ** 2 - 9 * _EP2) * D ** 4 / 24
-        + (61 + 90 * T1 + 298 * C1 + 45 * T1 ** 2 - 252 * _EP2 - 3 * C1 ** 2) * D ** 6 / 720
-    )
-    lon = (
-        D - (1 + 2 * T1 + C1) * D ** 3 / 6
-        + (5 - 2 * C1 + 28 * T1 - 3 * C1 ** 2 + 8 * _EP2 + 24 * T1 ** 2) * D ** 5 / 120
-    ) / cf
-    return (round(math.degrees(lon) + central_meridian, 7),
-            round(math.degrees(lat), 7))
+    """高斯-克吕格 → 经纬度。`x > 1_000_000` 视为含带号,自动剥离。
+    薄包装,核心算法在 crs.gk_inverse。"""
+    return gk_inverse(x, y, central_meridian, zone_prefix=True, zone_width=3)
 
 
 def _safe_reader(shp_path: Path):

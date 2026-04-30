@@ -17,17 +17,27 @@ import { flyTo, getViewer } from "../map/viewerRegistry";
 const ZOOMS = "12,13,14,15";
 const PROVIDERS_DEFAULT = "arcgis_sat";
 
-interface CountyEntry {
-  bbox?: [number, number, number, number];
-  center?: [number, number];
-}
+type Bbox4 = [number, number, number, number];
+/**
+ * shandong_admin.json 里 county 既可能是简写的 4 元组 [w,s,e,n],
+ * 也可能是 {bbox, center} 的对象,两种都需要兼容。
+ */
+type CountyEntry = Bbox4 | { bbox?: Bbox4; center?: [number, number] };
 interface CityEntry {
-  bbox?: [number, number, number, number];
+  bbox?: Bbox4;
   center?: [number, number];
   counties?: Record<string, CountyEntry>;
 }
 interface ShandongAdmin {
   cities: Record<string, CityEntry>;
+}
+
+function normalizeCountyBbox(co: CountyEntry | undefined): Bbox4 | undefined {
+  if (!co) return undefined;
+  if (Array.isArray(co)) {
+    return co.length === 4 ? (co as Bbox4) : undefined;
+  }
+  return co.bbox;
 }
 
 let _shandongAdminCache: ShandongAdmin | null = null;
@@ -95,11 +105,12 @@ export function TileDownloadPanel() {
   const cityObj = city ? citiesObj[city] : undefined;
   const countyNames = cityObj?.counties ? Object.keys(cityObj.counties) : [];
 
-  const bboxFromAdmin = (): [number, number, number, number] | null => {
+  const bboxFromAdmin = (): Bbox4 | null => {
     if (!cityObj) return null;
     if (county && cityObj.counties) {
       const co = cityObj.counties[county];
-      if (co?.bbox) return co.bbox;
+      const cb = normalizeCountyBbox(co);
+      if (cb) return cb;
     }
     return cityObj.bbox || null;
   };
@@ -428,11 +439,12 @@ export function TileDownloadPanel() {
             <button
               className="sp-button"
               onClick={async () => {
-                if (!confirm("确定清空所有离线瓦片缓存?")) return;
+                if (!confirm("确定清空所有离线瓦片缓存?\n下载历史和地图上的红色覆盖框也会一并清除。")) return;
                 await clearCache();
-                useUIStore.getState().showToast("缓存已清空");
+                useUIStore.getState().showToast("缓存与历史已清空");
                 const h = await fetchHistory(20);
                 setHistory(h.items || []);
+                useUIStore.getState().bumpOfflineCoverage();
               }}
             >
               清空缓存

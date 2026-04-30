@@ -2,9 +2,15 @@ import { useMemo } from "react";
 import ReactECharts from "echarts-for-react";
 import { useRelicsStore } from "../stores/relicsStore";
 import { useFilterStore } from "../stores/filterStore";
+import { useUIStore } from "../stores/uiStore";
 import { DIMS, dimValue, dimValues, buildColorMap, DEF_COLOR } from "../utils/dict";
 import type { DimDef } from "../utils/dict";
 import type { RelicSummary } from "../types";
+import {
+  DASH_MODULES,
+  type DashChartType,
+  type DashModuleCfg,
+} from "./dashboardModules";
 
 const TT = {
   backgroundColor: "rgba(13,17,23,.95)",
@@ -28,20 +34,13 @@ function countDim(relics: RelicSummary[], dim: DimDef) {
 interface ChartCardProps {
   title: string;
   dimId: string;
-  type?: "pie" | "bar" | "vbar";
+  type: DashChartType;
   relics: RelicSummary[];
   colorMap: Record<string, string>;
   onClickItem?: (val: string) => void;
 }
 
-function ChartCard({
-  title,
-  dimId,
-  type = "pie",
-  relics,
-  colorMap,
-  onClickItem,
-}: ChartCardProps) {
+function ChartCard({ title, dimId, type, relics, colorMap, onClickItem }: ChartCardProps) {
   const dim = DIMS.find((d) => d.id === dimId)!;
   const { counts, keys } = countDim(relics, dim);
   const data = keys.map((k) => ({
@@ -153,6 +152,26 @@ function ChartCard({
   );
 }
 
+interface SummaryCardsProps {
+  totalRecords: number;
+  has3d: number;
+}
+
+function SummaryCards({ totalRecords, has3d }: SummaryCardsProps) {
+  return (
+    <div className="dash-cards">
+      <div className="dc">
+        <div className="n">{totalRecords}</div>
+        <div className="l">当前文物总数</div>
+      </div>
+      <div className="dc y">
+        <div className="n">{has3d}</div>
+        <div className="l">三维模型</div>
+      </div>
+    </div>
+  );
+}
+
 export function Dashboard() {
   const allRelics = useRelicsStore((s) => s.all);
   const search = useFilterStore((s) => s.search);
@@ -163,6 +182,8 @@ export function Dashboard() {
   const activeCats = useFilterStore((s) => s.activeCats);
   const statFilters = useFilterStore((s) => s.statFilters);
   const setStatFilters = useFilterStore((s) => s.setStatFilters);
+  const dashModules = useUIStore((s) => s.dashModules);
+
   const toggleStat = (dimId: string, value: string) => {
     const next = { ...statFilters };
     if (next[dimId] === value) delete next[dimId];
@@ -213,28 +234,52 @@ export function Dashboard() {
     return out;
   }, [allRelics]);
 
+  const renderModule = (moduleId: string, cfg: DashModuleCfg) => {
+    if (moduleId === "summary") {
+      return (
+        <SummaryCards key="summary" totalRecords={totalRecords} has3d={has3d} />
+      );
+    }
+    const meta = DASH_MODULES.find((m) => m.id === moduleId);
+    if (!meta) return null;
+    const type: DashChartType = cfg.type || meta.defaultType || "pie";
+    return (
+      <ChartCard
+        key={moduleId}
+        title={meta.title}
+        dimId={moduleId}
+        type={type}
+        relics={relicsForChart}
+        colorMap={colorMaps[moduleId] || {}}
+        onClickItem={(v) => toggleStat(moduleId, v)}
+      />
+    );
+  };
+
+  // 按 DASH_MODULES 顺序分别归集到左/右两栏
+  const leftIds: string[] = [];
+  const rightIds: string[] = [];
+  DASH_MODULES.forEach((m) => {
+    const cfg = dashModules[m.id];
+    if (!cfg) return;
+    if (cfg.dock === "left") leftIds.push(m.id);
+    else if (cfg.dock === "right") rightIds.push(m.id);
+  });
+
   return (
-    <div className="dash dock-l">
-      <div className="dash-hdr">综合统计</div>
-      <div className="dash-cards">
-        <div className="dc">
-          <div className="n">{totalRecords}</div>
-          <div className="l">当前文物总数</div>
+    <>
+      {leftIds.length > 0 && (
+        <div className="dash dock-l">
+          <div className="dash-hdr">综合统计</div>
+          {leftIds.map((id) => renderModule(id, dashModules[id]))}
         </div>
-        <div className="dc y">
-          <div className="n">{has3d}</div>
-          <div className="l">三维模型</div>
+      )}
+      {rightIds.length > 0 && (
+        <div className="dash dock-r">
+          <div className="dash-hdr">综合统计</div>
+          {rightIds.map((id) => renderModule(id, dashModules[id]))}
         </div>
-      </div>
-      <ChartCard title="文物类别" dimId="category_main" type="pie" relics={relicsForChart} colorMap={colorMaps.category_main} onClickItem={(v) => toggleStat("category_main", v)} />
-      <ChartCard title="文物级别" dimId="heritage_level" type="bar" relics={relicsForChart} colorMap={colorMaps.heritage_level} onClickItem={(v) => toggleStat("heritage_level", v)} />
-      <ChartCard title="年代分布" dimId="era" type="vbar" relics={relicsForChart} colorMap={colorMaps.era} onClickItem={(v) => toggleStat("era", v)} />
-      <ChartCard title="乡镇分布" dimId="township" type="bar" relics={relicsForChart} colorMap={colorMaps.township} onClickItem={(v) => toggleStat("township", v)} />
-      <ChartCard title="普查类型" dimId="survey_type" type="pie" relics={relicsForChart} colorMap={colorMaps.survey_type} onClickItem={(v) => toggleStat("survey_type", v)} />
-      <ChartCard title="保存状态" dimId="condition_level" type="pie" relics={relicsForChart} colorMap={colorMaps.condition_level} onClickItem={(v) => toggleStat("condition_level", v)} />
-      <ChartCard title="所有权" dimId="ownership_type" type="pie" relics={relicsForChart} colorMap={colorMaps.ownership_type} onClickItem={(v) => toggleStat("ownership_type", v)} />
-      <ChartCard title="所属行业" dimId="industry" type="bar" relics={relicsForChart} colorMap={colorMaps.industry} onClickItem={(v) => toggleStat("industry", v)} />
-      <ChartCard title="影响因素" dimId="risk_factors" type="bar" relics={relicsForChart} colorMap={colorMaps.risk_factors} onClickItem={(v) => toggleStat("risk_factors", v)} />
-    </div>
+      )}
+    </>
   );
 }

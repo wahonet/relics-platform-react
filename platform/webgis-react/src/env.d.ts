@@ -31,6 +31,13 @@ interface PlatformConfig {
     relics_total: number;
     has_3d_count?: number;
   };
+  admin_ui?: {
+    available: boolean;
+    url: string;
+  };
+  auth?: {
+    enabled: boolean;
+  };
 }
 
 interface Window {

@@ -11,6 +11,7 @@ import { useUIStore } from "../stores/uiStore";
 import { useFilterStore } from "../stores/filterStore";
 import { useRelicsStore } from "../stores/relicsStore";
 import { useHomeViewStore } from "../stores/homeViewStore";
+import { useMouseCoordStore } from "../stores/mouseCoordStore";
 import { fetchRelicDetail } from "../api/relics";
 
 interface MapViewProps {
@@ -31,7 +32,9 @@ export function MapView({ onCompassRotate, onScaleUpdate }: MapViewProps) {
   const baseLayerAlpha = useUIStore((s) => s.baseLayerAlpha);
   const terrainEnabled = useUIStore((s) => s.terrainEnabled);
   const bndCounty = useUIStore((s) => s.bndCounty);
+  const bndCountyName = useUIStore((s) => s.bndCountyName);
   const bndTownship = useUIStore((s) => s.bndTownship);
+  const bndTownshipName = useUIStore((s) => s.bndTownshipName);
   const bndVillage = useUIStore((s) => s.bndVillage);
   const bndVillageName = useUIStore((s) => s.bndVillageName);
   const setUI = useUIStore((s) => s.set);
@@ -45,6 +48,7 @@ export function MapView({ onCompassRotate, onScaleUpdate }: MapViewProps) {
 
   const homeView = useHomeViewStore((s) => s.view);
   const offlineTick = useUIStore((s) => s.offlineCoverageTick);
+  const boundaryReloadTick = useUIStore((s) => s.boundaryReloadTick);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -77,7 +81,9 @@ export function MapView({ onCompassRotate, onScaleUpdate }: MapViewProps) {
       const ui = useUIStore.getState();
       boundary.setVisibility({
         county: ui.bndCounty,
+        countyName: ui.bndCountyName,
         township: ui.bndTownship,
+        townshipName: ui.bndTownshipName,
         village: ui.bndVillage,
         villageName: ui.bndVillageName,
       });
@@ -125,6 +131,41 @@ export function MapView({ onCompassRotate, onScaleUpdate }: MapViewProps) {
     viewer.scene.preRender.addEventListener(onPreRender);
     viewer.scene.postRender.addEventListener(onPostRender);
 
+    // 鼠标移动 → WGS84 经纬度,推到 mouseCoordStore 给底部坐标读数。
+    // 用独立 store 避免 MapView 自己重渲染。节流到 ~60fps。
+    const mouseHandler = new Cesium.ScreenSpaceEventHandler(viewer.canvas);
+    let lastTs = 0;
+    mouseHandler.setInputAction(
+      (movement: Cesium.ScreenSpaceEventHandler.MotionEvent) => {
+        const now = performance.now();
+        if (now - lastTs < 16) return;
+        lastTs = now;
+        try {
+          const ray = viewer.camera.getPickRay(movement.endPosition);
+          let cart: Cesium.Cartesian3 | undefined;
+          if (ray) {
+            cart = viewer.scene.globe.pick(ray, viewer.scene) as Cesium.Cartesian3 | undefined;
+          }
+          if (!cart) {
+            cart = viewer.camera.pickEllipsoid(movement.endPosition) as Cesium.Cartesian3 | undefined;
+          }
+          if (!cart) {
+            useMouseCoordStore.getState().set(null, null, null);
+            return;
+          }
+          const c = Cesium.Cartographic.fromCartesian(cart);
+          useMouseCoordStore.getState().set(
+            Cesium.Math.toDegrees(c.longitude),
+            Cesium.Math.toDegrees(c.latitude),
+            c.height,
+          );
+        } catch {
+          useMouseCoordStore.getState().set(null, null, null);
+        }
+      },
+      Cesium.ScreenSpaceEventType.MOUSE_MOVE,
+    );
+
     return () => {
       // 注意:在 React 18 StrictMode + hook 依赖链下,父级 useCesiumViewer 的
       // cleanup (viewer.destroy()) 可能比这个 cleanup 更早跑,导致 viewer 已死。
@@ -137,6 +178,12 @@ export function MapView({ onCompassRotate, onScaleUpdate }: MapViewProps) {
       } catch {
         /* ignore */
       }
+      try {
+        mouseHandler.destroy();
+      } catch {
+        /* ignore */
+      }
+      useMouseCoordStore.getState().set(null, null, null);
       viewport.stop();
       renderer.destroy();
       try {
@@ -189,11 +236,39 @@ export function MapView({ onCompassRotate, onScaleUpdate }: MapViewProps) {
     if (!b) return;
     b.setVisibility({
       county: bndCounty,
+      countyName: bndCountyName,
       township: bndTownship,
+      townshipName: bndTownshipName,
       village: bndVillage,
       villageName: bndVillageName,
     });
-  }, [bndCounty, bndTownship, bndVillage, bndVillageName]);
+  }, [
+    bndCounty,
+    bndCountyName,
+    bndTownship,
+    bndTownshipName,
+    bndVillage,
+    bndVillageName,
+  ]);
+
+  /** 边界数据被重下载/清空后,重新载入并按当前可见性渲染。
+   * 首次挂载时 boundaryReloadTick=0,跳过(避免重复 load,因为初始化 effect 已经 load 过一次)。 */
+  useEffect(() => {
+    if (boundaryReloadTick === 0) return;
+    const b = boundaryRef.current;
+    if (!b) return;
+    b.reload().then(() => {
+      const ui = useUIStore.getState();
+      b.setVisibility({
+        county: ui.bndCounty,
+        countyName: ui.bndCountyName,
+        township: ui.bndTownship,
+        townshipName: ui.bndTownshipName,
+        village: ui.bndVillage,
+        villageName: ui.bndVillageName,
+      });
+    });
+  }, [boundaryReloadTick]);
 
   useEffect(() => {
     const vm = viewportRef.current;
