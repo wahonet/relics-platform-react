@@ -16,6 +16,8 @@ import { flyTo, getViewer } from "../map/viewerRegistry";
 
 const ZOOMS = "12,13,14,15";
 const PROVIDERS_DEFAULT = "arcgis_sat";
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 17;
 
 type Bbox4 = [number, number, number, number];
 /**
@@ -59,6 +61,19 @@ function fmtBytes(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function sanitizeZoomsInput(value: string): string {
+  return Array.from(
+    new Set(
+      value
+        .split(/[^0-9]+/)
+        .map((part) => Number.parseInt(part, 10))
+        .filter((z) => Number.isInteger(z) && z >= MIN_ZOOM && z <= MAX_ZOOM),
+    ),
+  )
+    .sort((a, b) => a - b)
+    .join(",");
 }
 
 /** 给定 bbox,估算合适的相机高度 (m),让 bbox 全部进入视口。 */
@@ -116,6 +131,7 @@ export function TileDownloadPanel() {
   };
 
   const currentBbox = mode === "bbox" ? selectedBbox : bboxFromAdmin();
+  const requestZooms = sanitizeZoomsInput(zooms);
 
   const labelStr =
     mode === "bbox"
@@ -135,7 +151,7 @@ export function TileDownloadPanel() {
       currentBbox[2],
       currentBbox[3],
       providers,
-      zooms,
+      requestZooms,
     )
       .then((d) => {
         if ("error" in d && d.error) {
@@ -145,7 +161,7 @@ export function TileDownloadPanel() {
         }
       })
       .catch(() => setEstimate(null));
-  }, [currentBbox, providers, zooms]);
+  }, [currentBbox, providers, requestZooms]);
 
   const stopDraw = () => {
     if (drawHandlerRef.current) {
@@ -236,6 +252,10 @@ export function TileDownloadPanel() {
 
   const startJob = async () => {
     if (!currentBbox) return;
+    if (!requestZooms) {
+      useUIStore.getState().showToast("请输入 1-17 之间的瓦片层级");
+      return;
+    }
     try {
       const job = await startDownload(
         currentBbox[0],
@@ -243,7 +263,7 @@ export function TileDownloadPanel() {
         currentBbox[2],
         currentBbox[3],
         providers,
-        zooms,
+        requestZooms,
         labelStr,
       );
       setProgress({

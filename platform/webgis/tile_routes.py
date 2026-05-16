@@ -52,8 +52,40 @@ DOWNLOAD_JOBS_LOCK = threading.Lock()
 DOWNLOAD_JOB_TTL = 30 * 60
 DOWNLOAD_HISTORY_FILE = TILE_CACHE_DIR / "_download_history.jsonl"
 DOWNLOAD_HISTORY_MAX = 200
+TILE_MIN_ZOOM = 1
+TILE_MAX_ZOOM = 17
 
 _get_config: ConfigGetter = lambda: {}
+
+
+def _parse_provider_list(providers: str) -> list[str]:
+    """Keep only known tile providers while preserving user-selected order."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in providers.split(","):
+        provider = raw.strip()
+        if provider in TILE_URLS and provider not in seen:
+            out.append(provider)
+            seen.add(provider)
+    return out
+
+
+def _parse_zoom_list(zooms: str) -> list[int]:
+    """Parse and clamp user supplied zooms.
+
+    The UI accepts a free-form text field, so malformed values such as
+    "12,13,1415,16" must never reach tile math. Invalid/out-of-range tokens are
+    ignored; if nothing valid remains the caller returns a normal API error.
+    """
+    parsed: set[int] = set()
+    for raw in zooms.split(","):
+        token = raw.strip()
+        if not token or not token.isdigit():
+            continue
+        z = int(token)
+        if TILE_MIN_ZOOM <= z <= TILE_MAX_ZOOM:
+            parsed.add(z)
+    return sorted(parsed)
 
 
 def _tile_mem_get(key: str) -> bytes | None:
@@ -118,12 +150,16 @@ async def _fetch_and_cache_tile(
 
 
 def _lon_to_tile_x(lon: float, z: int) -> int:
-    return int((lon + 180) / 360 * (1 << z))
+    lon = max(-180.0, min(180.0, lon))
+    n = 1 << z
+    return max(0, min(n - 1, int((lon + 180) / 360 * n)))
 
 
 def _lat_to_tile_y(lat: float, z: int) -> int:
+    lat = max(-85.05112878, min(85.05112878, lat))
     lat_rad = math.radians(lat)
-    return int((1 - math.log(math.tan(lat_rad) + 1 / math.cos(lat_rad)) / math.pi) / 2 * (1 << z))
+    n = 1 << z
+    return max(0, min(n - 1, int((1 - math.log(math.tan(lat_rad) + 1 / math.cos(lat_rad)) / math.pi) / 2 * n)))
 
 
 def _bounds_from_config() -> tuple[float, float, float, float]:
@@ -138,10 +174,16 @@ def _bounds_from_config() -> tuple[float, float, float, float]:
 
 
 def _tiles_for_bounds(west, south, east, north, z):
+    if not (TILE_MIN_ZOOM <= z <= TILE_MAX_ZOOM):
+        return []
     x0 = _lon_to_tile_x(west, z)
     x1 = _lon_to_tile_x(east, z)
     y0 = _lat_to_tile_y(north, z)
     y1 = _lat_to_tile_y(south, z)
+    if x1 < x0:
+        x0, x1 = x1, x0
+    if y1 < y0:
+        y0, y1 = y1, y0
     return [(z, x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)]
 
 
@@ -417,13 +459,10 @@ def register_tile_routes(app: FastAPI, get_config: ConfigGetter) -> None:
     ):
         if not (west < east and south < north):
             return {"error": "invalid bbox"}
-        prov_list = [p for p in providers.split(",") if p in TILE_URLS]
+        prov_list = _parse_provider_list(providers)
         if not prov_list:
             return {"error": "no valid provider"}
-        try:
-            z_list = sorted({int(z) for z in zooms.split(",") if z.strip().isdigit()})
-        except Exception:
-            z_list = []
+        z_list = _parse_zoom_list(zooms)
         if not z_list:
             return {"error": "no zoom"}
         stat = _count_tiles_in_area(prov_list, (west, south, east, north), z_list)
@@ -446,14 +485,10 @@ def register_tile_routes(app: FastAPI, get_config: ConfigGetter) -> None:
     ):
         if not (west < east and south < north):
             return {"error": "invalid bbox"}
-        prov_list = [p for p in providers.split(",") if p in TILE_URLS]
+        prov_list = _parse_provider_list(providers)
         if not prov_list:
             return {"error": "no valid provider"}
-        try:
-            z_list = sorted({int(z) for z in zooms.split(",") if z.strip().isdigit()})
-        except Exception:
-            z_list = []
-        z_list = [z for z in z_list if 1 <= z <= 17]
+        z_list = _parse_zoom_list(zooms)
         if not z_list:
             return {"error": "no zoom"}
 
@@ -631,4 +666,3 @@ def register_tile_routes(app: FastAPI, get_config: ConfigGetter) -> None:
         await run_in_threadpool(_do_history)
         TILE_MEM_CACHE.clear()
         return {"cleared": removed, "history_cleared": clear_history}
-

@@ -51,6 +51,8 @@ Copy-Item config.example.yaml config.yaml
 http://127.0.0.1:8000/
 ```
 
+这个地址由 FastAPI 提供。后端会挂载已经构建过的前端产物，所以访问 `http://127.0.0.1:8000/` 通常会跳到 `http://127.0.0.1:8000/app/`，这是“后端集成入口”，适合只启动后端时查看已构建版本。
+
 ### 3. 启动前端
 
 ```powershell
@@ -65,6 +67,16 @@ http://127.0.0.1:8000/
 | Vue Admin | `http://127.0.0.1:5173/` | 管理后台、管线、CRUD、审计、导入导出 |
 
 前端 dev server 已在 Vite 中代理 `/api`、`/tiles`、`/photos`、`/drawings`、`/boundaries` 等路径到 FastAPI，不需要手工配 CORS。
+
+端口关系可以这样理解：
+
+| 端口 | 来源 | 用途 |
+|---|---|---|
+| `8000` | `start-backend.bat` / FastAPI | 后端 API、瓦片代理、静态挂载；`/app/` 和 `/admin-ui/` 是构建后的前端产物 |
+| `5174` | `start-frontend.bat` / React Vite | 主 WebGIS 开发服务，热更新，接口代理到 `8000` |
+| `5173` | `start-frontend.bat` / Vue Vite | Admin 开发服务，热更新，接口代理到 `8000` |
+
+日常改前端时看 `5174` 和 `5173`；只想跑集成后的版本时看 `8000/app/` 和 `8000/admin-ui/`。
 
 ## 数据目录约定
 

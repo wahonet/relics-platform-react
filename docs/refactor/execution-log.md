@@ -212,3 +212,22 @@
 - `RELICS_CHECK_ONLY=1 cmd /c start-backend.bat`：通过。
 - `RELICS_CHECK_ONLY=1 cmd /c start-frontend.bat`：通过。
 - `git diff --check`：通过。
+
+## 2026-05-17 Step 14 - Tile Download Zoom Guard And Port Clarification
+
+### 做了什么
+
+- 修复 `/api/tiles/area-estimate` 对异常 zoom 参数缺少范围校验的问题。
+- 新增后端 zoom/provider 解析 helper，统一过滤非法 provider 和 `1..17` 之外的 zoom。
+- `_tiles_for_bounds()` 增加 zoom 防护和经纬度 Web Mercator 边界夹取，避免异常参数触发溢出或数学错误。
+- React 瓦片下载面板在请求前清洗 zoom 输入，非法层级不会再发给后端。
+- README 和架构文档补充 `8000`、`5174`、`5173` 的端口关系。
+- 新增 `tests/test_tile_routes.py`，覆盖 `12,13,1415,16` 这类异常输入。
+
+### 验证
+
+- `.venv\Scripts\python.exe -m pytest`：通过，`15 passed`。
+- `npm.cmd run type-check` in `platform/webgis-react`：通过。
+- `npm.cmd run build` in `platform/webgis-react`：通过。
+- FastAPI app import：通过。
+- `git diff --check`：通过。
