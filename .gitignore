@@ -1,9 +1,11 @@
-# 原始资料（本地真实数据，包括四普档案 DOCX、Shapefile、DEM、3D 模型等，
-# 一律不纳入 Git。仓库自带的公开演示数据位于 data/output/，可随仓库发布）
+# User data and local configuration
 data/input/
+config.yaml
+.env
+.env.*
+*.key
 
-# 运行时产物 / 大文件缓存（保留 data/output/ 下公开 demo 数据的子目录，
-# 但把下面几类可能含敏感或体积很大的运行产物单独 ignore）
+# Large runtime artifacts under data/output
 data/output/tile_cache/
 data/output/worklog_pdf/
 data/output/worklog_pdfs/
@@ -12,41 +14,29 @@ data/output/models_3d/
 data/output/dem/
 *.log
 
-# 用户配置（含敏感信息）
-config.yaml
-.env
-.env.*
-*.key
-
-# 便携版 Python
+# Python
 python/
 .venv/
-
-# Python 缓存
 __pycache__/
 .pytest_cache/
 *.pyc
 *.pyo
 *.pyd
 
-# IDE
-.vscode/
-.idea/
-
-# 操作系统
-Thumbs.db
-.DS_Store
-desktop.ini
-
-# Node.js (前端工程通用)
+# Node
 node_modules/
 .npm-cache/
 *.tsbuildinfo
 
-# Vite / 构建产物 (Vue 后台、React 主前端)
+# Frontend build outputs
 platform/admin-vue/dist/
 platform/webgis-react/dist/
-
-# Vite cache
 .vite/
 .vite_cache/
+
+# Editors and OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+desktop.ini

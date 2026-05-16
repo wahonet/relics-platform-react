@@ -27,7 +27,7 @@ try:
     import yaml
 except ImportError:
     sys.stderr.write(
-        "[错误] 未安装 pyyaml。请先运行 setup.bat 或手动执行:\n"
+        "[错误] 未安装 pyyaml。请先运行 start-backend.bat 或手动执行:\n"
         "       python -m pip install pyyaml\n"
     )
     sys.exit(1)
@@ -76,7 +76,7 @@ def get_paths() -> Paths:
 
 
 def ensure_data_dirs() -> None:
-    """首次运行时创建全部 data/ 目录骨架,供 setup.bat 调用。"""
+    """首次运行时创建全部 data/ 目录骨架,供后端启动和管线脚本使用。"""
     p = get_paths()
     for f in p.__dataclass_fields__:
         if f == "root":
@@ -104,7 +104,7 @@ def load_config(path: Path | str | None = None) -> dict:
     cfg_path = Path(path) if path else CONFIG_PATH
     if not cfg_path.exists():
         raise FileNotFoundError(
-            f"未找到 {cfg_path}\n请先运行项目根目录的 setup.bat 完成初始化。"
+            f"未找到 {cfg_path}\n请先复制 config.example.yaml 为 config.yaml 并按项目实际情况修改。"
         )
     with cfg_path.open("r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
@@ -225,7 +225,7 @@ def detect_features() -> FeatureStatus:
 
 
 def print_status() -> None:
-    """打印项目概览(setup.bat / run_pipeline.bat 末尾调用)。"""
+    """打印项目概览,供启动排查或管线执行前检查使用。"""
     print("=" * 60)
     print("  Relics Platform - 项目状态")
     print("=" * 60)
@@ -241,7 +241,7 @@ def print_status() -> None:
         except Exception as e:
             print(f"[配置] {CONFIG_PATH.name} 解析失败: {e}")
     else:
-        print(f"[配置] {CONFIG_PATH.name} 不存在,请先运行 setup.bat")
+        print(f"[配置] {CONFIG_PATH.name} 不存在,请先复制 config.example.yaml 为 config.yaml")
 
     feat = detect_features()
     print("\n[数据] 输入检测:")
