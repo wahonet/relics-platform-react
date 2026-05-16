@@ -3,7 +3,7 @@
 // dist/ 整个挂载到 /app/,因此真实查找路径是 dist/cesium/...
 //
 // 这里把 dist/app/cesium/ 移动到 dist/cesium/ 让 URL 与磁盘对齐。
-import { existsSync, renameSync, rmSync, readdirSync } from "node:fs";
+import { cpSync, existsSync, renameSync, rmSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/+([A-Za-z]:)/, "$1")), "..");
@@ -20,8 +20,15 @@ if (existsSync(rightDir)) {
   rmSync(rightDir, { recursive: true, force: true });
 }
 
-renameSync(wrongDir, rightDir);
-console.log(`[fix-cesium-path] moved ${wrongDir} -> ${rightDir}`);
+try {
+  renameSync(wrongDir, rightDir);
+  console.log(`[fix-cesium-path] moved ${wrongDir} -> ${rightDir}`);
+} catch (error) {
+  console.warn(`[fix-cesium-path] rename failed (${error.code}); copying instead`);
+  cpSync(wrongDir, rightDir, { recursive: true });
+  rmSync(wrongDir, { recursive: true, force: true });
+  console.log(`[fix-cesium-path] copied ${wrongDir} -> ${rightDir}`);
+}
 
 // Clean up empty dist/app folder if it's now empty.
 const appDir = path.join(distDir, "app");

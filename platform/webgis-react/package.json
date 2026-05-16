@@ -1,7 +1,7 @@
 {
   "name": "relics-webgis-react",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "Relics Platform WebGIS — React + three.js refactor",
   "scripts": {

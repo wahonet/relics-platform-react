@@ -6,68 +6,40 @@
 """
 from __future__ import annotations
 
-import asyncio
 import csv
 import json
-import os
 import re
 import sys
-import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Body, File, Form, Header, HTTPException, Query, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from _common import get_paths  # noqa: E402
-from codes import (  # noqa: E402
-    CATEGORY_CODES,
-    RANK_CODES,
-    SEARCH_TYPE_CODES,
-    normalize_category,
-    normalize_rank,
-    normalize_search_type,
-)
-from data_loader import store  # noqa: E402
+from routers import admin_relic_routes, admin_task_service as task_service  # noqa: E402
 
 router = APIRouter(prefix="/admin", tags=["管理"])
+router.include_router(admin_relic_routes.router)
 
 # 脚本注册表,同时接受 stepNN 完整名称与前端短别名。
-SCRIPTS: dict[str, Path] = {
-    "step01_convert_docs":       _SCRIPTS_DIR / "step01_convert_docs.py",
-    "step02_build_dataset":      _SCRIPTS_DIR / "step02_build_dataset.py",
-    "step03_extract_photos":     _SCRIPTS_DIR / "step03_extract_photos.py",
-    "step04_extract_drawings":   _SCRIPTS_DIR / "step04_extract_drawings.py",
-    "step05_convert_worklogs":   _SCRIPTS_DIR / "step05_convert_worklogs.py",
-    "step06_prepare_boundaries": _SCRIPTS_DIR / "step06_prepare_boundaries.py",
-    "run_pipeline":              _SCRIPTS_DIR / "run_pipeline.py",
-}
-SCRIPT_ALIAS: dict[str, str] = {
-    "process_docs":     "step01_convert_docs",
-    "build_dataset":    "step02_build_dataset",
-    "extract_photos":   "step03_extract_photos",
-    "extract_drawings": "step04_extract_drawings",
-    "convert_worklogs": "step05_convert_worklogs",
-    "prepare_boundaries": "step06_prepare_boundaries",
-}
+SCRIPTS = task_service.SCRIPTS
+SCRIPT_ALIAS = task_service.SCRIPT_ALIAS
 
 
 def _resolve_script(name: str) -> str:
     """把短别名或 stepNN_xxx 解析为真实脚本键。"""
-    if name in SCRIPTS:
-        return name
-    if name in SCRIPT_ALIAS:
-        return SCRIPT_ALIAS[name]
+    if name in SCRIPTS or name in SCRIPT_ALIAS:
+        return task_service.resolve_script(name)
     raise HTTPException(400, f"未知脚本: {name}")
 
 
 # task_id -> {status, script, started, log[], returncode, finished?}
-_tasks: dict[str, dict] = {}
+_tasks = task_service.tasks
 
 
 # ── 文件统计工具 ────────────────────────────────────────────
@@ -128,19 +100,7 @@ def _count_geojson_features(p: Path) -> int:
 
 def _last_task_for(script_name: str) -> Optional[dict]:
     """取该脚本最近一次任务,供管线卡片显示"最近运行时间"。"""
-    latest: Optional[tuple[str, dict]] = None
-    for tid, t in _tasks.items():
-        if t["script"] == script_name:
-            if latest is None or t["started"] > latest[1]["started"]:
-                latest = (tid, t)
-    if not latest:
-        return None
-    _, t = latest
-    return {
-        "status": t["status"],
-        "started": t["started"],
-        "finished": t.get("finished"),
-    }
+    return task_service.last_task_for(script_name)
 
 
 def _township_dirs() -> list[str]:
@@ -352,8 +312,32 @@ async def pipeline_detailed():
         "artifact_mtime": _mtime_str(paths.output_boundaries),
     }
 
+    db_file = paths.output_dataset / "relics.db"
+    relics_json_count = _count_json_array(relics_json)
+    step07 = {
+        "id": "step07_build_db",
+        "name": "SQLite DB Build",
+        "icon": "DB",
+        "desc": "Build relics.db from dataset artifacts for R-Tree, FTS5, audit log and Admin writes",
+        "flow": "Dataset -> SQLite",
+        "input": {"total": relics_json_count, "label": "relic JSON records"},
+        "output": {
+            "total": 1 if db_file.exists() else 0,
+            "label": "relics.db",
+            "extra": {
+                "size_kb": round(db_file.stat().st_size / 1024, 1) if db_file.exists() else 0,
+            },
+        },
+        "pending": 0 if db_file.exists() else (1 if relics_json_count > 0 else 0),
+        "progress": 100.0 if db_file.exists() else 0.0,
+        "runnable": relics_json.exists(),
+        "optional": False,
+        "last_run": _last_task_for("step07_build_db"),
+        "artifact_mtime": _mtime_str(db_file),
+    }
+
     return {
-        "steps": [step01, step02, step03, step04, step05, step06],
+        "steps": [step01, step02, step03, step04, step05, step06, step07],
         "tasks": {
             tid: {
                 "status": t["status"],
@@ -407,6 +391,8 @@ async def step_items(step_id: str):
         return _items_step05(paths)
     if step_id == "step06_prepare_boundaries":
         return _items_step06(paths)
+    if step_id == "step07_build_db":
+        return _items_step07(paths)
 
     raise HTTPException(400, f"不支持查看 {step_id} 的详情")
 
@@ -581,61 +567,42 @@ def _items_step06(paths) -> dict:
 
 
 # ── 任务执行 ────────────────────────────────────────────────
-def _run_script_sync(script_path: str, task_id: str, extra_env: Optional[dict] = None) -> None:
-    """阻塞执行脚本,最后 300 行输出挂到 _tasks[task_id]['log'],
-    供 /admin/task/<id> 轮询使用。由线程池调用。"""
-    import subprocess
-    env = os.environ.copy()
-    env["PYTHONIOENCODING"] = "utf-8"
-    if extra_env:
-        env.update(extra_env)
-
-    _tasks[task_id]["status"] = "running"
-    try:
-        proc = subprocess.Popen(
-            [sys.executable, script_path],
-            cwd=str(get_paths().root),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env=env,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        lines: list[str] = []
-        for line in proc.stdout:
-            lines.append(line.rstrip("\n"))
-            _tasks[task_id]["log"] = lines[-300:]
-        proc.wait()
-        _tasks[task_id]["returncode"] = proc.returncode
-        _tasks[task_id]["status"] = "done" if proc.returncode == 0 else "error"
-        _tasks[task_id]["finished"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    except Exception as e:
-        _tasks[task_id]["status"] = "error"
-        _tasks[task_id]["log"] = _tasks[task_id].get("log", []) + [f"Exception: {e}"]
+def _items_step07(paths) -> dict:
+    relics_json = paths.output_dataset / "relics_full.json"
+    db_file = paths.output_dataset / "relics.db"
+    json_count = _count_json_array(relics_json)
+    items = [
+        {
+            "id": "relics_full.json",
+            "name": "relics_full.json",
+            "status": "done" if relics_json.exists() else "pending",
+            "feature_count": json_count,
+            "output": relics_json.name if relics_json.exists() else None,
+            "output_size_kb": round(relics_json.stat().st_size / 1024, 1) if relics_json.exists() else 0,
+            "output_mtime": _mtime_str(relics_json),
+        },
+        {
+            "id": "relics.db",
+            "name": "relics.db",
+            "status": "done" if db_file.exists() else "pending",
+            "feature_count": json_count if db_file.exists() else 0,
+            "output": db_file.name if db_file.exists() else None,
+            "output_size_kb": round(db_file.stat().st_size / 1024, 1) if db_file.exists() else 0,
+            "output_mtime": _mtime_str(db_file),
+        },
+    ]
+    done_n = sum(1 for i in items if i["status"] == "done")
+    return {
+        "step": "step07_build_db",
+        "groups": [{"name": "SQLite DB", "total": len(items), "done": done_n,
+                    "pending": len(items) - done_n, "items": items}],
+    }
 
 
 @router.post("/run/{script_name}")
 async def run_script(script_name: str):
     """后台异步执行脚本。支持短别名与 stepNN 完整名;同脚本并发时返回 409。"""
-    real = _resolve_script(script_name)
-    for tid, t in _tasks.items():
-        if t["script"] == real and t["status"] == "running":
-            raise HTTPException(409, f"{real} 正在运行中 (task={tid})")
-
-    task_id = str(uuid.uuid4())[:8]
-    _tasks[task_id] = {
-        "status": "starting",
-        "script": real,
-        "started": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "log": [],
-        "returncode": None,
-    }
-    script_path = str(SCRIPTS[real])
-    asyncio.get_event_loop().run_in_executor(
-        None, _run_script_sync, script_path, task_id, None
-    )
-    return {"task_id": task_id, "script": real}
+    return task_service.start_script_task(script_name)
 
 
 @router.get("/task/{task_id}")
@@ -706,432 +673,13 @@ async def process_single(
     content = await file.read()
     dest.write_bytes(content)
 
-    task_id = str(uuid.uuid4())[:8]
-    _tasks[task_id] = {
-        "status": "starting",
-        "script": "step01_convert_docs",
-        "started": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "log": [f"已上传: {file.filename} → {township}"],
-        "returncode": None,
-        "single_file": file.filename,
-    }
-    script_path = str(SCRIPTS["step01_convert_docs"])
-    asyncio.get_event_loop().run_in_executor(
-        None, _run_script_sync, script_path, task_id, None
+    task = task_service.start_script_task(
+        "step01_convert_docs",
+        initial_log=[f"Uploaded {file.filename} -> {township}"],
+        extra_fields={"single_file": file.filename},
     )
     return {
-        "task_id": task_id,
-        "message": f"已上传 {file.filename} 并开始提取",
+        "task_id": task["task_id"],
+        "message": f"Uploaded {file.filename} and started extraction",
         "township": township,
     }
-
-
-# ── 文物 CRUD (DB + 乐观锁 + 审计) ────────────────────────
-# 仅 DB 模式可用。调用方需传 expected_version,冲突返回 409。
-
-def _require_db() -> None:
-    if not getattr(store, "_use_db", False):
-        raise HTTPException(503, "DB 未启用；请先运行 step07_build_db.py 并重启服务")
-
-
-def _normalize_relic_payload(raw: dict) -> dict:
-    """把中文字段(category_main / heritage_level / survey_type 等)标准化到 DB 编码;
-    已经是编码的直接保留。"""
-    p = dict(raw or {})
-    if "category_main" in p and "category" not in p:
-        p["category"] = normalize_category(p.pop("category_main"))
-    elif "category" in p:
-        p["category"] = normalize_category(p["category"])
-    if "heritage_level" in p and "rank" not in p:
-        p["rank"] = normalize_rank(p.pop("heritage_level"))
-    elif "rank" in p:
-        p["rank"] = normalize_rank(p["rank"])
-    if "survey_type" in p and "search_type" not in p:
-        p["search_type"] = normalize_search_type(p.pop("survey_type"))
-
-    # legacy 字段兼容:center_lng/lat/alt、archive_code。
-    if "center_lng" in p and "lng" not in p:
-        p["lng"] = p.pop("center_lng")
-    if "center_lat" in p and "lat" not in p:
-        p["lat"] = p.pop("center_lat")
-    if "center_alt" in p and "alt" not in p:
-        p["alt"] = p.pop("center_alt")
-    if "archive_code" in p and "code" not in p:
-        p["code"] = p.pop("archive_code")
-    return p
-
-
-@router.post("/relics")
-async def create_relic(
-    payload: dict = Body(...),
-    x_actor: Optional[str] = Header(None, alias="X-Actor"),
-):
-    """创建文物。payload 至少包含 code / name / lng / lat。"""
-    _require_db()
-    try:
-        after = store.create_relic(_normalize_relic_payload(payload), actor=x_actor or "")
-    except ValueError as e:
-        msg = str(e)
-        code = 409 if "已存在" in msg else 400
-        raise HTTPException(code, msg)
-    return {"ok": True, "relic": after}
-
-
-@router.put("/relics/{code}")
-async def update_relic(
-    code: str,
-    payload: dict = Body(...),
-    x_actor: Optional[str] = Header(None, alias="X-Actor"),
-):
-    """更新文物。payload 必传 expected_version;冲突返回 409。"""
-    _require_db()
-    ev = payload.pop("expected_version", None)
-    if ev is None:
-        raise HTTPException(400, "缺少 expected_version（乐观锁）")
-    try:
-        after = store.update_relic(
-            code, _normalize_relic_payload(payload),
-            expected_version=int(ev), actor=x_actor or "",
-        )
-    except ValueError as e:
-        msg = str(e)
-        if msg == "VERSION_CONFLICT":
-            raise HTTPException(409, "版本冲突：数据已被他人修改，请重新加载")
-        if "不存在" in msg:
-            raise HTTPException(404, msg)
-        raise HTTPException(400, msg)
-    return {"ok": True, "relic": after}
-
-
-@router.delete("/relics/{code}")
-async def delete_relic(
-    code: str,
-    x_actor: Optional[str] = Header(None, alias="X-Actor"),
-):
-    """软删除(status=-1)。可通过 PUT /relics/{code} 把 status 改回 1 恢复。"""
-    _require_db()
-    try:
-        store.delete_relic(code, actor=x_actor or "")
-    except ValueError as e:
-        raise HTTPException(404, str(e))
-    return {"ok": True}
-
-
-@router.get("/audit")
-async def list_audit(
-    code: Optional[str] = None,
-    limit: int = 100,
-    action: Optional[str] = Query(None, description="多值逗号分隔：create,update,delete,rollback"),
-    actor: Optional[str] = None,
-    field: Optional[str] = Query(None, description="字段名 LIKE 过滤，如 'lng' / 'name'"),
-    start_ts: Optional[int] = None,
-    end_ts: Optional[int] = None,
-):
-    """审计日志列表,支持多条件筛选,最近在前。"""
-    _require_db()
-    actions = [a.strip() for a in (action or "").split(",") if a.strip()] or None
-    return {
-        "rows": store.list_audit(
-            code=code, limit=max(1, min(limit, 500)),
-            actions=actions,
-            actor=(actor or "").strip() or None,
-            field=(field or "").strip() or None,
-            start_ts=start_ts, end_ts=end_ts,
-        )
-    }
-
-
-@router.post("/audit/{audit_id}/rollback")
-async def rollback_audit(
-    audit_id: int,
-    x_actor: Optional[str] = Header(None, alias="X-Actor"),
-):
-    """按审计记录回滚文物到 before_json 状态。"""
-    _require_db()
-    try:
-        return store.rollback_audit(audit_id, actor=x_actor or "")
-    except ValueError as e:
-        msg = str(e)
-        if msg == "VERSION_CONFLICT":
-            raise HTTPException(409, "版本冲突：文物已被他人修改，请刷新后重试")
-        if "不存在" in msg or "已彻底删除" in msg:
-            raise HTTPException(404, msg)
-        raise HTTPException(400, msg)
-
-
-@router.get("/stats-overview")
-async def stats_overview():
-    """Dashboard 聚合指标,一次请求出齐所有卡片/图表数据;
-    DB 未启用时走 legacy 内存聚合,仅返回基础字段。"""
-    return store.admin_stats_overview()
-
-
-@router.get("/codes")
-async def codes_dict():
-    """国标编码字典:category / rank / search_type → 中文标签。"""
-    return {
-        "categories": [{"code": c, "label": CATEGORY_CODES[c]} for c in CATEGORY_CODES],
-        "ranks": [{"code": c, "label": RANK_CODES[c]} for c in RANK_CODES],
-        "search_types": [{"code": c, "label": SEARCH_TYPE_CODES[c]} for c in SEARCH_TYPE_CODES],
-    }
-
-
-@router.get("/relics-townships")
-async def relics_townships():
-    """后台乡镇下拉,来源为 DB 中已入库文物。"""
-    _require_db()
-    return {"townships": store.admin_list_townships()}
-
-
-def _parse_bbox(bbox: Optional[str]) -> Optional[tuple]:
-    """解析 'minLng,minLat,maxLng,maxLat';格式非法返回 None。"""
-    if not bbox:
-        return None
-    parts = [p.strip() for p in bbox.split(",") if p.strip()]
-    if len(parts) != 4:
-        return None
-    try:
-        mnl, mnt, mxl, mxt = [float(p) for p in parts]
-        return (mnl, mnt, mxl, mxt)
-    except ValueError:
-        return None
-
-
-@router.get("/relics")
-async def list_relics(
-    page: int = 1,
-    size: int = 20,
-    search: Optional[str] = None,
-    category: Optional[str] = None,
-    rank: Optional[str] = None,
-    township: Optional[str] = None,
-    search_type: Optional[str] = None,
-    status: Optional[int] = None,
-    bbox: Optional[str] = Query(None, description="minLng,minLat,maxLng,maxLat"),
-    order_by: str = "updated_at_desc",
-):
-    """后台分页列表。category / rank 支持逗号多选。"""
-    _require_db()
-    categories = [c for c in (category or "").split(",") if c] or None
-    ranks = [c for c in (rank or "").split(",") if c] or None
-    return store.admin_list_relics(
-        page=page, size=size, search=(search or "").strip() or None,
-        categories=categories, ranks=ranks,
-        township=(township or "").strip() or None,
-        search_type=(search_type or "").strip() or None,
-        status=status,
-        bbox=_parse_bbox(bbox),
-        order_by=order_by,
-    )
-
-
-@router.get("/relics/{code}/neighbors")
-async def relic_neighbors(
-    code: str,
-    radius: float = Query(2000.0, ge=50, le=50000, description="米"),
-    limit: int = Query(20, ge=1, le=100),
-):
-    """radius 米内的其它文物,按距离升序。"""
-    _require_db()
-    return {
-        "code": code, "radius": radius,
-        "items": store.admin_neighbors(code, radius_m=radius, limit=limit),
-    }
-
-
-@router.get("/relics/{code}")
-async def get_relic_full(code: str):
-    """文物全字段,含 _version 供乐观锁。"""
-    _require_db()
-    r = store.get_relic_full(code) if hasattr(store, "get_relic_full") else store.get_relic(code)
-    if not r:
-        raise HTTPException(404, f"未找到文物: {code}")
-    return r
-
-
-@router.post("/relics/bulk-update")
-async def bulk_update_relics(
-    payload: dict = Body(...),
-    x_actor: Optional[str] = Header(None, alias="X-Actor"),
-):
-    """批量同字段更新。payload = {codes, fields}。
-
-    - fields 仅保留可写字段;不接受 expected_version(逐条取当前 version)。
-    - 乐观锁冲突 / 不存在 / 异常逐条记录,不中断其它条目。
-    """
-    _require_db()
-    codes = payload.get("codes") or []
-    fields = payload.get("fields") or {}
-    if not isinstance(codes, list) or not codes:
-        raise HTTPException(400, "codes 不能为空")
-    if not isinstance(fields, dict) or not fields:
-        raise HTTPException(400, "fields 不能为空")
-    patch = _normalize_relic_payload(fields)
-    # code 不允许批量改写。
-    patch.pop("code", None)
-    try:
-        return store.admin_bulk_update(codes, patch, actor=x_actor or "")
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-
-
-@router.post("/relics/bulk-status")
-async def bulk_set_status(
-    payload: dict = Body(...),
-    x_actor: Optional[str] = Header(None, alias="X-Actor"),
-):
-    """批量改状态。payload = {codes, status}。status=-1 走软删(action=delete),
-    0/1 走 bulk_update(action=update)。"""
-    _require_db()
-    codes = payload.get("codes") or []
-    status = payload.get("status")
-    if not isinstance(codes, list) or not codes:
-        raise HTTPException(400, "codes 不能为空")
-    if status not in (1, 0, -1):
-        raise HTTPException(400, "status 只能是 1 / 0 / -1")
-    if status == -1:
-        return store.admin_bulk_delete(codes, actor=x_actor or "")
-    return store.admin_bulk_update(codes, {"status": int(status)}, actor=x_actor or "")
-
-
-@router.get("/relics-export")
-async def export_relics(
-    search: Optional[str] = None,
-    category: Optional[str] = None,
-    rank: Optional[str] = None,
-    township: Optional[str] = None,
-    search_type: Optional[str] = None,
-    status: Optional[int] = None,
-    codes: Optional[str] = Query(None, description="逗号分隔的 code 列表；给出时忽略其他筛选"),
-    bbox: Optional[str] = Query(None, description="minLng,minLat,maxLng,maxLat"),
-    order_by: str = "code_asc",
-):
-    """按筛选或显式 codes 列表导出 CSV(UTF-8 BOM,Excel 可直接打开)。"""
-    _require_db()
-    cat_list = [c for c in (category or "").split(",") if c] or None
-    rank_list = [c for c in (rank or "").split(",") if c] or None
-    code_list = [c.strip() for c in (codes or "").split(",") if c.strip()] or None
-
-    fieldnames = [
-        "code", "name",
-        "category", "category_label",
-        "rank", "rank_label",
-        "search_type", "search_type_label",
-        "era", "era_stats",
-        "lng", "lat", "alt",
-        "township", "village", "address",
-        "has_3d", "has_pdf", "has_photo", "has_boundary",
-        "photo_count", "drawing_count",
-        "status", "version", "updated_at",
-        "brief",
-    ]
-
-    def _gen():
-        import io
-        buf = io.StringIO()
-        writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
-        yield "\ufeff"  # UTF-8 BOM,Excel 识别中文
-        writer.writeheader()
-        yield buf.getvalue()
-        buf.seek(0); buf.truncate(0)
-        rows = store.admin_export_relics(
-            search=(search or "").strip() or None,
-            categories=cat_list, ranks=rank_list,
-            township=(township or "").strip() or None,
-            search_type=(search_type or "").strip() or None,
-            status=status,
-            codes=code_list,
-            bbox=_parse_bbox(bbox),
-            order_by=order_by,
-        )
-        for r in rows:
-            row = dict(r)
-            row["category_label"] = CATEGORY_CODES.get(str(row.get("category") or ""), "")
-            row["rank_label"] = RANK_CODES.get(str(row.get("rank") or ""), "")
-            row["search_type_label"] = SEARCH_TYPE_CODES.get(str(row.get("search_type") or ""), "")
-            for k in ("has_3d", "has_pdf", "has_photo", "has_boundary"):
-                row[k] = 1 if row.get(k) else 0
-            writer.writerow(row)
-            yield buf.getvalue()
-            buf.seek(0); buf.truncate(0)
-
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    filename = f"relics-{ts}.csv"
-    return StreamingResponse(
-        _gen(),
-        media_type="text/csv; charset=utf-8",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-            "Cache-Control": "no-store",
-        },
-    )
-
-
-@router.post("/relics/import")
-async def import_relics(
-    file: UploadFile = File(...),
-    mode: str = Form("upsert"),          # upsert / create_only
-    x_actor: Optional[str] = Header(None, alias="X-Actor"),
-):
-    """批量导入。接受 CSV / JSON 数组,按 code 匹配。
-
-    - upsert:已存在走 update(从 DB 读最新 version),否则 create
-    - create_only:已存在则跳过,仅新增
-
-    返回逐行结果。无整体事务;大文件请分批导入。
-    """
-    _require_db()
-    raw = await file.read()
-    if not raw:
-        raise HTTPException(400, "空文件")
-
-    items: list[dict] = []
-    name = (file.filename or "").lower()
-    if name.endswith(".json"):
-        try:
-            data = json.loads(raw.decode("utf-8-sig"))
-        except json.JSONDecodeError as e:
-            raise HTTPException(400, f"JSON 解析失败: {e}")
-        if not isinstance(data, list):
-            raise HTTPException(400, "JSON 顶层需是数组")
-        items = data
-    elif name.endswith(".csv"):
-        import io
-        text = raw.decode("utf-8-sig")
-        reader = csv.DictReader(io.StringIO(text))
-        items = list(reader)
-    else:
-        raise HTTPException(400, "仅支持 .csv / .json")
-
-    results = {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
-    for idx, raw_row in enumerate(items, start=1):
-        p = _normalize_relic_payload(raw_row)
-        code = (p.get("code") or "").strip()
-        if not code:
-            results["skipped"] += 1
-            continue
-        try:
-            existing = store.get_relic(code)
-            if existing:
-                if mode == "create_only":
-                    results["skipped"] += 1
-                    continue
-                ev = existing.get("_version")
-                if ev is None:
-                    # legacy 字典不含 version,直接读 DB 取最新值。
-                    row = store._thread_conn().execute(
-                        "SELECT version FROM relics WHERE code = ?", (code,)
-                    ).fetchone()
-                    ev = int(row["version"]) if row else 1
-                store.update_relic(code, p, expected_version=int(ev), actor=x_actor or "import")
-                results["updated"] += 1
-            else:
-                store.create_relic(p, actor=x_actor or "import")
-                results["created"] += 1
-        except Exception as e:
-            results["failed"] += 1
-            results["errors"].append({"line": idx, "code": code, "error": str(e)})
-            if len(results["errors"]) > 50:
-                break
-
-    return results

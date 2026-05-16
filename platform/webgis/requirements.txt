@@ -3,6 +3,7 @@ fastapi>=0.110
 uvicorn[standard]>=0.27
 pydantic>=2.5
 pyyaml>=6.0
+python-multipart>=0.0.9
 # AI 问答
 openai>=1.12
 # DEM 地形服务

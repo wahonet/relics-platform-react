@@ -41,38 +41,11 @@ _SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from codes import CATEGORY_CODES, RANK_CODES, SEARCH_TYPE_CODES  # noqa: E402
+from data_serializers import row_to_legacy  # noqa: E402
+from survey_coverage import compute_village_coverage, load_survey_routes  # noqa: E402
+import data_admin_queries  # noqa: E402
+import data_admin_stats  # noqa: E402
 
-
-# ── DB 行 → 旧 relic 字典 ─────────────────────────────────────
-def _row_to_legacy(row: sqlite3.Row, extra: dict) -> dict:
-    """DB 行反向映射为旧字典格式(archive_code / category_main / ...),
-    供仅认旧字段的路由与前端代码使用。"""
-    d = dict(extra) if extra else {}
-    d.update({
-        "archive_code": row["code"],
-        "name": row["name"],
-        "category_main": CATEGORY_CODES.get(row["category"], "其他"),
-        "heritage_level": RANK_CODES.get(row["rank"], ""),
-        "survey_type": SEARCH_TYPE_CODES.get(row["search_type"] or "", row["search_type"] or ""),
-        "center_lng": row["lng"],
-        "center_lat": row["lat"],
-        "center_alt": row["alt"],
-        "township": row["township"] or "",
-        "village": row["village"] or "",
-        "address": row["address"] or "",
-        "era": row["era"] or "",
-        "era_stats": row["era_stats"] or "",
-        "has_3d": bool(row["has_3d"]),
-        "has_boundary": bool(row["has_boundary"]),
-        "photo_count": row["photo_count"] or 0,
-        "drawing_count": row["drawing_count"] or 0,
-        "intro": row["brief"] or "",
-        "_cat_code": row["category"],
-        "_rank_code": row["rank"],
-        "_version": row["version"] if "version" in row.keys() else 1,
-    })
-    return d
 
 
 class DataStore:
@@ -190,7 +163,7 @@ class DataStore:
                     extra = json.loads(row["extra_json"]) or {}
                 except json.JSONDecodeError:
                     pass
-            d = _row_to_legacy(row, extra)
+            d = row_to_legacy(row, extra)
             if self.pdf_map.get(row["code"]):
                 d["has_pdf"] = True
                 d["pdf_path"] = self.pdf_map[row["code"]]
@@ -270,153 +243,22 @@ class DataStore:
         log.info("[PDF] %d 个档案 PDF 已索引", len(self.pdf_map))
 
     def _load_survey_routes(self, path: Path) -> None:
-        rows = self._read_csv(path)
-        if not rows:
-            return
-
-        def _pick(row: dict, *keys: str) -> str:
-            for k in keys:
-                if k in row and row[k] not in (None, ""):
-                    return str(row[k]).strip()
-            return ""
-
-        west, south, east, north = self._bounds or (-180.0, -90.0, 180.0, 90.0)
-        groups: dict[str, list[dict]] = {}
-
-        for row in rows:
-            dt_str = _pick(row, "拍摄时间", "time", "datetime")
-            lat_str = _pick(row, "纬度", "lat", "latitude")
-            lon_str = _pick(row, "经度", "lon", "lng", "longitude")
-            if not dt_str or not lat_str or not lon_str:
-                continue
-            try:
-                lat = float(lat_str)
-                lon = float(lon_str)
-            except ValueError:
-                continue
-            if not (south < lat < north and west < lon < east):
-                continue
-
-            parts = dt_str.split(" ", 1)
-            date_raw = parts[0]
-            time_raw = parts[1] if len(parts) > 1 else "00:00:00"
-
-            dp = date_raw.replace("/", "-").split("-")
-            if len(dp) == 3:
-                date = f"{int(dp[0]):04d}-{int(dp[1]):02d}-{int(dp[2]):02d}"
-            else:
-                date = date_raw
-
-            tp = time_raw.split(":")
-            time_val = ":".join(p.zfill(2) for p in tp[:3])
-            if len(tp) < 3:
-                time_val += ":00"
-
-            groups.setdefault(date, []).append({
-                "filename": _pick(row, "文件名", "filename"),
-                "time": time_val,
-                "lat": lat,
-                "lon": lon,
-            })
-
-        for pts in groups.values():
-            pts.sort(key=lambda p: p["time"])
-        self.survey_routes = dict(sorted(groups.items()))
-        total = sum(len(v) for v in self.survey_routes.values())
-        log.info("[普查路线] 已加载 %d 天 / %d 个点", len(self.survey_routes), total)
+        self.survey_routes = load_survey_routes(
+            path=path,
+            bounds=self._bounds,
+            read_csv=self._read_csv,
+            log=log,
+        )
 
     def _compute_village_coverage(self, village_path: Path) -> None:
-        try:
-            from shapely.geometry import Point, LineString, shape
-            from shapely import STRtree
-            from shapely.ops import prep
-        except ImportError:
-            log.warning("[村村达] 缺少 shapely 依赖，跳过空间分析")
-            return
-
-        with open(village_path, "r", encoding="utf-8") as f:
-            vdata = json.load(f)
-        features = vdata.get("features", [])
-        if not features:
-            return
-
-        village_list: list[dict] = []
-        polygons: list = []
-        for feat in features:
-            props = feat.get("properties", {})
-            geom = feat.get("geometry")
-            if not geom:
-                continue
-            try:
-                poly = shape(geom)
-                if not poly.is_valid:
-                    poly = poly.buffer(0)
-            except Exception:
-                continue
-            centroid = poly.centroid
-            village_list.append({
-                "name": props.get("ZLDWMC") or props.get("name") or "",
-                "township": props.get("_township") or props.get("township") or "",
-                "center_lat": round(centroid.y, 6),
-                "center_lon": round(centroid.x, 6),
-            })
-            polygons.append(poly)
-
-        tree = STRtree(polygons)
-        prepped = [prep(p) for p in polygons]
-        reached: set[int] = set()
-        first_date: dict[int, str] = {}
-        reached_by: dict[int, str] = {}
-
-        for date in sorted(self.survey_routes.keys()):
-            pts = self.survey_routes[date]
-            coords = [(p["lon"], p["lat"]) for p in pts]
-            if len(coords) >= 2:
-                route_geom = LineString(coords)
-            elif len(coords) == 1:
-                route_geom = Point(coords[0])
-            else:
-                continue
-            for idx in tree.query(route_geom):
-                if idx not in reached and prepped[idx].intersects(route_geom):
-                    reached.add(idx)
-                    first_date[idx] = date
-                    reached_by[idx] = "route"
-
-        for r in self.relics:
-            lat = r.get("center_lat")
-            lng = r.get("center_lng")
-            if not lat or not lng:
-                continue
-            try:
-                pt = Point(float(lng), float(lat))
-            except (TypeError, ValueError):
-                continue
-            for idx in tree.query(pt):
-                if idx not in reached and prepped[idx].intersects(pt):
-                    reached.add(idx)
-                    first_date[idx] = ""
-                    reached_by[idx] = "relic"
-
-        villages = []
-        for i, v in enumerate(village_list):
-            v["reached"] = i in reached
-            v["first_date"] = first_date.get(i, "")
-            v["reached_by"] = reached_by.get(i, "")
-            villages.append(v)
-
-        reached_count = sum(1 for v in villages if v["reached"])
-        self.village_coverage = {
-            "total": len(villages),
-            "reached": reached_count,
-            "unreached": len(villages) - reached_count,
-            "villages": villages,
-        }
-        log.info(
-            "[村村达] %d/%d 村已到达 (%.1f%%)",
-            reached_count, len(villages),
-            reached_count / len(villages) * 100 if villages else 0,
+        coverage = compute_village_coverage(
+            village_path=village_path,
+            survey_routes=self.survey_routes,
+            relics=self.relics,
+            log=log,
         )
+        if coverage is not None:
+            self.village_coverage = coverage
 
     # ── 兼容旧接口 ───────────────────────────────────────────
     def get_relic(self, code: str) -> Optional[dict]:
@@ -667,7 +509,7 @@ class DataStore:
                     extra = json.loads(row["extra_json"]) or {}
                 except json.JSONDecodeError:
                     pass
-            d = _row_to_legacy(row, extra)
+            d = row_to_legacy(row, extra)
             d["photos"] = self.get_photos(code)
             d["drawings"] = self.get_drawings(code)
             if self.pdf_map.get(code):
@@ -1036,58 +878,9 @@ class DataStore:
         radius_m: float = 2000.0,
         limit: int = 20,
     ) -> list[dict]:
-        """radius_m 米内的其它文物,按距离升序。
-        排除自身与软删除;bbox 粗筛 + haversine 精算。"""
-        if not self._use_db:
-            return []
-        import math
-        conn = self._thread_conn()
-        me = conn.execute(
-            "SELECT lng, lat FROM relics WHERE code=?", (code,)
-        ).fetchone()
-        if not me or me["lng"] is None or me["lat"] is None:
-            return []
-        lng0 = float(me["lng"]); lat0 = float(me["lat"])
-        # 1° lat ≈ 111 km,用度数粗算 bbox 边距。
-        dlat = radius_m / 111_000.0
-        dlng = radius_m / (111_000.0 * max(math.cos(math.radians(lat0)), 0.01))
-        rows = conn.execute(
-            """
-            SELECT code, name, category, rank, lng, lat, township, village, era_stats
-            FROM relics
-            WHERE status >= 0 AND code <> ?
-              AND lng IS NOT NULL AND lat IS NOT NULL
-              AND lng BETWEEN ? AND ? AND lat BETWEEN ? AND ?
-            """,
-            (code, lng0 - dlng, lng0 + dlng, lat0 - dlat, lat0 + dlat),
-        ).fetchall()
-
-        def _haversine(lng1, lat1, lng2, lat2) -> float:
-            R = 6371_000.0
-            p1 = math.radians(lat1); p2 = math.radians(lat2)
-            dp = math.radians(lat2 - lat1); dl = math.radians(lng2 - lng1)
-            a = math.sin(dp/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
-            return 2 * R * math.asin(math.sqrt(a))
-
-        out: list[dict] = []
-        for r in rows:
-            d = _haversine(lng0, lat0, float(r["lng"]), float(r["lat"]))
-            if d > radius_m:
-                continue
-            out.append({
-                "code": r["code"],
-                "name": r["name"],
-                "category": r["category"],
-                "rank": r["rank"],
-                "lng": r["lng"],
-                "lat": r["lat"],
-                "township": r["township"] or "",
-                "village": r["village"] or "",
-                "era_stats": r["era_stats"] or "",
-                "distance_m": round(d, 1),
-            })
-        out.sort(key=lambda x: x["distance_m"])
-        return out[: max(1, min(int(limit), 200))]
+        return data_admin_queries.admin_neighbors(
+            self, code, radius_m=radius_m, limit=limit
+        )
 
     # ── 后台分页查询（给 /api/admin/relics 用） ─────────────────
     def admin_list_relics(
@@ -1104,174 +897,34 @@ class DataStore:
         bbox: Optional[tuple] = None,
         order_by: str = "updated_at_desc",
     ) -> dict:
-        """后台分页列表。返回 {data, total, page, size}。
-
-        search 同时匹配 code 前缀与 name 子串;
-        status=None 返回 status>=0(正常 + 草稿),不含软删除。
-        """
-        if not self._use_db:
-            # JSON 模式,仅内存列表分页。
-            return self._admin_list_legacy(
-                page=page, size=size, search=search,
-                categories=categories, ranks=ranks,
-                township=township, search_type=search_type,
-            )
-
-        where: list[str] = []
-        params: list = []
-        if search:
-            where.append("(r.code LIKE ? OR r.name LIKE ?)")
-            params.extend([f"%{search}%", f"%{search}%"])
-        if categories:
-            cl = [str(v) for v in categories if v not in (None, "")]
-            if cl:
-                where.append(f"r.category IN ({','.join('?' for _ in cl)})")
-                params.extend(cl)
-        if ranks:
-            rl = [str(v) for v in ranks if v not in (None, "")]
-            if rl:
-                where.append(f"r.rank IN ({','.join('?' for _ in rl)})")
-                params.extend(rl)
-        if township:
-            where.append("r.township = ?")
-            params.append(township)
-        if search_type:
-            where.append("r.search_type = ?")
-            params.append(str(search_type))
-        if status is None:
-            where.append("r.status >= 0")
-        else:
-            where.append("r.status = ?")
-            params.append(int(status))
-        if bbox:
-            try:
-                mnl, mnt, mxl, mxt = [float(v) for v in bbox]
-                if mnl > mxl: mnl, mxl = mxl, mnl
-                if mnt > mxt: mnt, mxt = mxt, mnt
-                where.append(
-                    "r.lng IS NOT NULL AND r.lat IS NOT NULL "
-                    "AND r.lng BETWEEN ? AND ? AND r.lat BETWEEN ? AND ?"
-                )
-                params.extend([mnl, mxl, mnt, mxt])
-            except (TypeError, ValueError):
-                pass
-
-        where_sql = (" WHERE " + " AND ".join(where)) if where else ""
-
-        order_map = {
-            "updated_at_desc": "r.updated_at DESC",
-            "updated_at_asc":  "r.updated_at ASC",
-            "code_asc":        "r.code ASC",
-            "code_desc":       "r.code DESC",
-            "name_asc":        "r.name ASC",
-        }
-        order_sql = order_map.get(order_by, "r.updated_at DESC")
-
-        page = max(1, int(page))
-        size = max(1, min(int(size), 200))
-        offset = (page - 1) * size
-
-        conn = self._thread_conn()
-        total_row = conn.execute(
-            f"SELECT COUNT(*) AS n FROM relics AS r{where_sql}", params,
-        ).fetchone()
-        total = int(total_row["n"]) if total_row else 0
-
-        rows = conn.execute(
-            f"""
-            SELECT r.id, r.code, r.name, r.category, r.rank, r.search_type,
-                   r.lng, r.lat, r.township, r.village, r.era, r.era_stats,
-                   r.has_3d, r.has_pdf, r.has_photo, r.has_boundary,
-                   r.photo_count, r.drawing_count,
-                   r.status, r.version, r.updated_at
-            FROM relics AS r{where_sql}
-            ORDER BY {order_sql}
-            LIMIT ? OFFSET ?
-            """,
-            [*params, size, offset],
-        ).fetchall()
-
-        data = [
-            {
-                "id": r["id"],
-                "code": r["code"],
-                "name": r["name"],
-                "category": r["category"],
-                "rank": r["rank"],
-                "search_type": r["search_type"] or "",
-                "lng": r["lng"],
-                "lat": r["lat"],
-                "township": r["township"] or "",
-                "village": r["village"] or "",
-                "era": r["era"] or "",
-                "era_stats": r["era_stats"] or "",
-                "has_3d": bool(r["has_3d"]),
-                "has_pdf": bool(r["has_pdf"]),
-                "has_photo": bool(r["has_photo"]),
-                "has_boundary": bool(r["has_boundary"]),
-                "photo_count": r["photo_count"] or 0,
-                "drawing_count": r["drawing_count"] or 0,
-                "status": r["status"],
-                "version": r["version"],
-                "updated_at": r["updated_at"],
-            }
-            for r in rows
-        ]
-        return {"data": data, "total": total, "page": page, "size": size}
+        return data_admin_queries.admin_list_relics(
+            self,
+            page=page,
+            size=size,
+            search=search,
+            categories=categories,
+            ranks=ranks,
+            township=township,
+            search_type=search_type,
+            status=status,
+            bbox=bbox,
+            order_by=order_by,
+        )
 
     def _admin_list_legacy(
         self, *, page, size, search, categories, ranks,
         township, search_type,
     ) -> dict:
-        """JSON 模式下的简易分页,仅适用于小规模 demo。"""
-        from codes import normalize_category, normalize_rank, normalize_search_type
-        rank_set = {str(v) for v in ranks} if ranks else None
-        cat_set = {str(v) for v in categories} if categories else None
-        s = (search or "").strip()
-        out = []
-        for r in self.relics:
-            code = (r.get("archive_code") or "").strip()
-            name = (r.get("name") or "").strip()
-            if s and s not in code and s not in name:
-                continue
-            c = normalize_category(r.get("category_main"))
-            rk = normalize_rank(r.get("heritage_level"))
-            st = normalize_search_type(r.get("survey_type"))
-            if cat_set and c not in cat_set:
-                continue
-            if rank_set and rk not in rank_set:
-                continue
-            if township and (r.get("township") or "") != township:
-                continue
-            if search_type and st != str(search_type):
-                continue
-            out.append({
-                "id": code,
-                "code": code,
-                "name": name,
-                "category": c,
-                "rank": rk,
-                "search_type": st,
-                "lng": r.get("center_lng"),
-                "lat": r.get("center_lat"),
-                "township": r.get("township") or "",
-                "village": r.get("village") or "",
-                "era": r.get("era") or "",
-                "era_stats": r.get("era_stats") or "",
-                "has_3d": bool(r.get("has_3d")),
-                "has_pdf": False,
-                "has_photo": (r.get("photo_count") or 0) > 0,
-                "has_boundary": bool(r.get("has_boundary")),
-                "photo_count": r.get("photo_count") or 0,
-                "drawing_count": r.get("drawing_count") or 0,
-                "status": 1,
-                "version": 1,
-                "updated_at": None,
-            })
-        total = len(out)
-        page = max(1, int(page)); size = max(1, min(int(size), 200))
-        lo = (page - 1) * size
-        return {"data": out[lo:lo + size], "total": total, "page": page, "size": size}
+        return data_admin_queries._admin_list_legacy(
+            self,
+            page=page,
+            size=size,
+            search=search,
+            categories=categories,
+            ranks=ranks,
+            township=township,
+            search_type=search_type,
+        )
 
     # ── 批量操作（后台多选工具用）───────────────────────
     def admin_bulk_update(
@@ -1357,325 +1010,27 @@ class DataStore:
         bbox: Optional[tuple] = None,
         order_by: str = "code_asc",
     ) -> Iterable[dict]:
-        """按条件/显式 code 列表导出,生成器形式(适合流式写 CSV)。
-
-        给出 codes 时忽略其它筛选,按列表精确导出;不分页,调用方自行节流。
-        """
-        if not self._use_db:
-            # JSON 模式:内存分页迭代。
-            def _gen_legacy():
-                page = 1
-                while True:
-                    r = self._admin_list_legacy(
-                        page=page, size=200, search=search,
-                        categories=categories, ranks=ranks,
-                        township=township, search_type=search_type,
-                    )
-                    for row in r["data"]:
-                        yield row
-                    if page * r["size"] >= r["total"]:
-                        break
-                    page += 1
-            yield from _gen_legacy()
-            return
-
-        conn = self._thread_conn()
-        codes_list = [str(c).strip() for c in (codes or []) if str(c).strip()]
-
-        where: list[str] = []
-        params: list = []
-        if codes_list:
-            where.append(f"r.code IN ({','.join('?' for _ in codes_list)})")
-            params.extend(codes_list)
-        else:
-            if search:
-                where.append("(r.code LIKE ? OR r.name LIKE ?)")
-                params.extend([f"%{search}%", f"%{search}%"])
-            if categories:
-                cl = [str(v) for v in categories if v not in (None, "")]
-                if cl:
-                    where.append(f"r.category IN ({','.join('?' for _ in cl)})")
-                    params.extend(cl)
-            if ranks:
-                rl = [str(v) for v in ranks if v not in (None, "")]
-                if rl:
-                    where.append(f"r.rank IN ({','.join('?' for _ in rl)})")
-                    params.extend(rl)
-            if township:
-                where.append("r.township = ?")
-                params.append(township)
-            if search_type:
-                where.append("r.search_type = ?")
-                params.append(str(search_type))
-            if status is None:
-                where.append("r.status >= 0")
-            else:
-                where.append("r.status = ?")
-                params.append(int(status))
-            if bbox:
-                try:
-                    mnl, mnt, mxl, mxt = [float(v) for v in bbox]
-                    if mnl > mxl: mnl, mxl = mxl, mnl
-                    if mnt > mxt: mnt, mxt = mxt, mnt
-                    where.append(
-                        "r.lng IS NOT NULL AND r.lat IS NOT NULL "
-                        "AND r.lng BETWEEN ? AND ? AND r.lat BETWEEN ? AND ?"
-                    )
-                    params.extend([mnl, mxl, mnt, mxt])
-                except (TypeError, ValueError):
-                    pass
-
-        where_sql = (" WHERE " + " AND ".join(where)) if where else ""
-        order_map = {
-            "updated_at_desc": "r.updated_at DESC",
-            "updated_at_asc":  "r.updated_at ASC",
-            "code_asc":        "r.code ASC",
-            "code_desc":       "r.code DESC",
-            "name_asc":        "r.name ASC",
-        }
-        order_sql = order_map.get(order_by, "r.code ASC")
-        cur = conn.execute(
-            f"""
-            SELECT r.code, r.name, r.category, r.rank, r.search_type,
-                   r.era, r.era_stats,
-                   r.lng, r.lat, r.alt,
-                   r.township, r.village, r.address,
-                   r.has_3d, r.has_pdf, r.has_photo, r.has_boundary,
-                   r.photo_count, r.drawing_count,
-                   r.brief, r.status, r.version, r.updated_at
-            FROM relics AS r{where_sql}
-            ORDER BY {order_sql}
-            """,
-            params,
+        return data_admin_queries.admin_export_relics(
+            self,
+            search=search,
+            categories=categories,
+            ranks=ranks,
+            township=township,
+            search_type=search_type,
+            status=status,
+            codes=codes,
+            bbox=bbox,
+            order_by=order_by,
         )
-        for r in cur:
-            yield {k: r[k] for k in r.keys()}
 
     def admin_stats_overview(self) -> dict:
-        """后台首页聚合指标,尽量一次 SQL 拿齐。
-
-        返回字段:
-          totals              总数/3D/PDF/照片/有边界/草稿/删除
-          by_category         大类分布 [{code,label,count}]
-          by_rank             保护级别分布
-          by_search_type      普查来源分布
-          by_township_top     乡镇 Top15
-          by_era_stats_top    年代 Top8
-          audit_14days        近 14 天按日 × 动作统计
-          audit_recent        最近 10 条审计
-          last_updated        数据库最近更新秒时间戳
-        """
-        if not self._use_db:
-            return self._admin_stats_legacy()
-
-        conn = self._thread_conn()
-
-        # ── 总数 + 布尔字段计数(一条 SQL) ────────────────
-        t = conn.execute(
-            """
-            SELECT
-                SUM(CASE WHEN status = 1  THEN 1 ELSE 0 END) AS total,
-                SUM(CASE WHEN status = 0  THEN 1 ELSE 0 END) AS drafts,
-                SUM(CASE WHEN status = -1 THEN 1 ELSE 0 END) AS deleted,
-                SUM(CASE WHEN status = 1 AND has_3d = 1       THEN 1 ELSE 0 END) AS has_3d,
-                SUM(CASE WHEN status = 1 AND has_pdf = 1      THEN 1 ELSE 0 END) AS has_pdf,
-                SUM(CASE WHEN status = 1 AND has_photo = 1    THEN 1 ELSE 0 END) AS has_photo,
-                SUM(CASE WHEN status = 1 AND has_boundary = 1 THEN 1 ELSE 0 END) AS has_boundary,
-                MAX(updated_at) AS last_updated
-            FROM relics
-            """,
-        ).fetchone()
-        totals = {
-            "total":        int(t["total"] or 0),
-            "drafts":       int(t["drafts"] or 0),
-            "deleted":      int(t["deleted"] or 0),
-            "has_3d":       int(t["has_3d"] or 0),
-            "has_pdf":      int(t["has_pdf"] or 0),
-            "has_photo":    int(t["has_photo"] or 0),
-            "has_boundary": int(t["has_boundary"] or 0),
-        }
-        last_updated = int(t["last_updated"] or 0)
-
-        # ── 类别 / 级别 / 普查来源 分布 ──────────────────
-        from codes import CATEGORY_CODES, RANK_CODES, SEARCH_TYPE_CODES
-
-        def _count_group(col: str) -> dict:
-            rows = conn.execute(
-                f"SELECT {col} AS k, COUNT(*) AS n FROM relics WHERE status = 1 GROUP BY {col}"
-            ).fetchall()
-            return {str(r["k"] or ""): int(r["n"]) for r in rows}
-
-        cat_counts = _count_group("category")
-        rank_counts = _count_group("rank")
-        st_counts = _count_group("search_type")
-
-        by_category = [
-            {"code": c, "label": CATEGORY_CODES[c], "count": cat_counts.get(c, 0)}
-            for c in CATEGORY_CODES
-        ]
-        by_rank = [
-            {"code": c, "label": RANK_CODES[c], "count": rank_counts.get(c, 0)}
-            for c in RANK_CODES
-        ]
-        by_search_type = [
-            {"code": c, "label": SEARCH_TYPE_CODES[c], "count": st_counts.get(c, 0)}
-            for c in SEARCH_TYPE_CODES
-        ]
-
-        # ── 乡镇 Top15 ─────────────────────────────────
-        rows = conn.execute(
-            """
-            SELECT township AS k, COUNT(*) AS n FROM relics
-            WHERE status = 1 AND township IS NOT NULL AND township <> ''
-            GROUP BY township ORDER BY n DESC LIMIT 15
-            """,
-        ).fetchall()
-        by_township_top = [{"name": r["k"], "count": int(r["n"])} for r in rows]
-
-        # ── 年代 Top8 ─────────────────────────────────
-        rows = conn.execute(
-            """
-            SELECT era_stats AS k, COUNT(*) AS n FROM relics
-            WHERE status = 1 AND era_stats IS NOT NULL AND era_stats <> ''
-            GROUP BY era_stats ORDER BY n DESC LIMIT 8
-            """,
-        ).fetchall()
-        by_era_stats_top = [{"name": r["k"], "count": int(r["n"])} for r in rows]
-
-        # ── 近 14 天审计变更(按日按动作) ──────────────
-        import time as _time
-        now = int(_time.time())
-        start = now - 13 * 86400
-        # 使用 sqlite localtime 分桶,前端直接消费不再二次转换。
-        rows = conn.execute(
-            """
-            SELECT
-                strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') AS day,
-                action,
-                COUNT(*) AS n
-            FROM audit_log
-            WHERE ts >= ?
-            GROUP BY day, action
-            """,
-            (start,),
-        ).fetchall()
-        # 补齐 14 天完整序列,缺失日填 0。
-        import datetime as _dt
-        today = _dt.date.fromtimestamp(now)
-        days = [(today - _dt.timedelta(days=13 - i)).isoformat() for i in range(14)]
-        action_map = {"create": {}, "update": {}, "delete": {}}
-        for r in rows:
-            act = r["action"] or "update"
-            if act not in action_map:
-                action_map[act] = {}
-            action_map[act][r["day"]] = int(r["n"])
-        audit_14days = {
-            "days": days,
-            "create": [action_map["create"].get(d, 0) for d in days],
-            "update": [action_map["update"].get(d, 0) for d in days],
-            "delete": [action_map["delete"].get(d, 0) for d in days],
-        }
-
-        # ── 最近 10 条审计 ─────────────────────────────
-        rows = conn.execute(
-            """
-            SELECT a.id, a.ts, a.actor, a.action, a.relic_code, r.name
-            FROM audit_log a
-            LEFT JOIN relics r ON r.code = a.relic_code
-            ORDER BY a.id DESC LIMIT 10
-            """,
-        ).fetchall()
-        audit_recent = [
-            {
-                "id": r["id"],
-                "ts": r["ts"],
-                "actor": r["actor"] or "",
-                "action": r["action"] or "",
-                "relic_code": r["relic_code"] or "",
-                "relic_name": r["name"] or "",
-            }
-            for r in rows
-        ]
-
-        return {
-            "totals": totals,
-            "by_category": by_category,
-            "by_rank": by_rank,
-            "by_search_type": by_search_type,
-            "by_township_top": by_township_top,
-            "by_era_stats_top": by_era_stats_top,
-            "audit_14days": audit_14days,
-            "audit_recent": audit_recent,
-            "last_updated": last_updated,
-        }
+        return data_admin_stats.admin_stats_overview(self)
 
     def _admin_stats_legacy(self) -> dict:
-        """JSON 模式 fallback,从内存 relics 现算(字段能少则少)。"""
-        from codes import CATEGORY_CODES, RANK_CODES, SEARCH_TYPE_CODES
-        from codes import normalize_category, normalize_rank, normalize_search_type
-
-        total = len(self.relics)
-        has_3d = sum(1 for r in self.relics if r.get("has_3d"))
-        has_boundary = sum(1 for r in self.relics if r.get("has_boundary"))
-        has_photo = sum(1 for r in self.relics if (r.get("photo_count") or 0) > 0)
-
-        cat_counts: dict[str, int] = {}
-        rank_counts: dict[str, int] = {}
-        st_counts: dict[str, int] = {}
-        twp_counts: dict[str, int] = {}
-        era_counts: dict[str, int] = {}
-        for r in self.relics:
-            cat_counts[normalize_category(r.get("category_main"))] = cat_counts.get(normalize_category(r.get("category_main")), 0) + 1
-            rank_counts[normalize_rank(r.get("heritage_level"))] = rank_counts.get(normalize_rank(r.get("heritage_level")), 0) + 1
-            st = normalize_search_type(r.get("survey_type"))
-            st_counts[st] = st_counts.get(st, 0) + 1
-            t = (r.get("township") or "").strip()
-            if t:
-                twp_counts[t] = twp_counts.get(t, 0) + 1
-            e = (r.get("era_stats") or "").strip()
-            if e:
-                era_counts[e] = era_counts.get(e, 0) + 1
-
-        return {
-            "totals": {
-                "total": total, "drafts": 0, "deleted": 0,
-                "has_3d": has_3d, "has_pdf": 0,
-                "has_photo": has_photo, "has_boundary": has_boundary,
-            },
-            "by_category": [
-                {"code": c, "label": CATEGORY_CODES[c], "count": cat_counts.get(c, 0)}
-                for c in CATEGORY_CODES
-            ],
-            "by_rank": [
-                {"code": c, "label": RANK_CODES[c], "count": rank_counts.get(c, 0)}
-                for c in RANK_CODES
-            ],
-            "by_search_type": [
-                {"code": c, "label": SEARCH_TYPE_CODES[c], "count": st_counts.get(c, 0)}
-                for c in SEARCH_TYPE_CODES
-            ],
-            "by_township_top": [
-                {"name": k, "count": v}
-                for k, v in sorted(twp_counts.items(), key=lambda x: -x[1])[:15]
-            ],
-            "by_era_stats_top": [
-                {"name": k, "count": v}
-                for k, v in sorted(era_counts.items(), key=lambda x: -x[1])[:8]
-            ],
-            "audit_14days": {"days": [], "create": [], "update": [], "delete": []},
-            "audit_recent": [],
-            "last_updated": 0,
-        }
+        return data_admin_stats._admin_stats_legacy(self)
 
     def admin_list_townships(self) -> list[str]:
-        """DB 中出现过的乡镇列表(去重排序),供筛选下拉使用。"""
-        if not self._use_db:
-            return sorted({(r.get("township") or "").strip() for r in self.relics if r.get("township")})
-        conn = self._thread_conn()
-        rows = conn.execute(
-            "SELECT DISTINCT township FROM relics WHERE township IS NOT NULL AND township <> '' ORDER BY township"
-        ).fetchall()
-        return [r["township"] for r in rows]
+        return data_admin_queries.admin_list_townships(self)
 
     # ── 工具 ────────────────────────────────────────────────
     @staticmethod

@@ -20,9 +20,11 @@ config.yaml
 
 # 便携版 Python
 python/
+.venv/
 
 # Python 缓存
 __pycache__/
+.pytest_cache/
 *.pyc
 *.pyo
 *.pyd
@@ -38,6 +40,7 @@ desktop.ini
 
 # Node.js (前端工程通用)
 node_modules/
+.npm-cache/
 *.tsbuildinfo
 
 # Vite / 构建产物 (Vue 后台、React 主前端)
