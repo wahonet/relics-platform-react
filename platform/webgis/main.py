@@ -388,6 +388,22 @@ class _LoginBody(BaseModel):
     password: str
 
 
+def _auth_enabled() -> bool:
+    return bool((_CONFIG.get("server") or {}).get("enable_auth", False))
+
+
+def _login_response(username: str = "admin") -> JSONResponse:
+    resp = JSONResponse({"ok": True, "username": username or "admin"})
+    resp.set_cookie(
+        key="session",
+        value="authenticated",
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    return resp
+
+
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     if _react_build_exists():
@@ -404,16 +420,11 @@ async def login_page(request: Request):
 
 @app.post("/api/login")
 async def api_login(body: _LoginBody):
+    if not _auth_enabled():
+        return _login_response(body.username or "admin")
+
     users = (_CONFIG.get("server") or {}).get("users") or []
     for user in users:
         if user.get("username") == body.username and user.get("password") == body.password:
-            resp = JSONResponse({"ok": True})
-            resp.set_cookie(
-                key="session",
-                value="authenticated",
-                httponly=True,
-                samesite="lax",
-                path="/",
-            )
-            return resp
+            return _login_response(body.username)
     return JSONResponse({"detail": "用户名或密码错误"}, status_code=401)

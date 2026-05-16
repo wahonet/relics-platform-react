@@ -231,3 +231,20 @@
 - `npm.cmd run build` in `platform/webgis-react`：通过。
 - FastAPI app import：通过。
 - `git diff --check`：通过。
+
+## 2026-05-17 Step 15 - Admin Login Auth Semantics
+
+### 做了什么
+
+- 修复 `server.enable_auth: false` 时 Vue Admin 仍被 `/api/login` 拒绝的问题。
+- `/api/login` 在关闭鉴权时直接签发本地 session cookie；只有 `enable_auth: true` 时才校验 `server.users`。
+- 登录页默认用户名改为 `admin`，密码占位提示模板默认值 `changeme`。
+- README 中后台登录配置字段改为 `server.enable_auth` / `server.users`。
+- 新增 `tests/test_login_auth.py` 覆盖关闭鉴权与开启鉴权两种路径。
+
+### 验证
+
+- `.venv\Scripts\python.exe -m pytest`：通过，`17 passed`。
+- `npm.cmd run typecheck` in `platform/admin-vue`：通过。
+- `npm.cmd run build` in `platform/admin-vue`：通过。
+- Python compile for `platform/webgis/main.py`：通过。

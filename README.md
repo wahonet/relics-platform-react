@@ -33,7 +33,7 @@ Copy-Item config.example.yaml config.yaml
 | `geo.boundaries.*` | 行政边界投影参数 |
 | `administrative.county_name` / `townships` | 县区与乡镇列表 |
 | `api.*` / 环境变量 | AI、地图源或其他外部服务密钥 |
-| `admin.*` | 管理后台登录配置 |
+| `server.enable_auth` / `server.users` | 登录保护开关与后台账号；模板默认账号为 `admin / changeme` |
 
 真实数据放入 `data/input/`，生成结果会进入 `data/output/`。仓库只保留目录骨架和公开基础字典，不提交用户数据。
 

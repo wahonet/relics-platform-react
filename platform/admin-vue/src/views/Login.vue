@@ -28,7 +28,7 @@
           <el-input
             v-model="form.password"
             type="password"
-            placeholder="请输入密码"
+            placeholder="默认模板密码 changeme"
             autocomplete="current-password"
             :prefix-icon="Lock"
             show-password
@@ -68,7 +68,7 @@ const auth = useAuthStore();
 
 const formRef = ref<FormInstance>();
 const loading = ref(false);
-const form = reactive({ username: '', password: '' });
+const form = reactive({ username: 'admin', password: '' });
 
 const rules: FormRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
