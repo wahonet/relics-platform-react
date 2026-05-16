@@ -196,3 +196,19 @@
 - Vue typecheck：通过。
 - Vue production build：通过。
 - Git diff whitespace check：通过。
+
+## 2026-05-16 Step 13 - Startup Script Fix
+
+### 做了什么
+
+- 修复 `start-backend.bat` 中仍提示旧 `1-setup.bat` 的问题。
+- 后端启动脚本在缺少 `config.yaml` 时自动从 `config.example.yaml` 复制一份。
+- 后端启动脚本会确保 `data/` 目录骨架存在。
+- 重写 `start-frontend.bat`，移除 `call :ensure_deps` 子程序，避免 Windows batch label 解析失败。
+- 两个启动脚本增加 `RELICS_CHECK_ONLY=1` 预检模式，便于验证而不真正启动长驻服务。
+
+### 验证
+
+- `RELICS_CHECK_ONLY=1 cmd /c start-backend.bat`：通过。
+- `RELICS_CHECK_ONLY=1 cmd /c start-frontend.bat`：通过。
+- `git diff --check`：通过。
