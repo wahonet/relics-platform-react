@@ -1,29 +1,24 @@
 """Relic management routes for the admin API."""
 from __future__ import annotations
 
-import csv
-import json
-import sys
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Body, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
-_SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
-
-from codes import (  # noqa: E402
-    CATEGORY_CODES,
-    RANK_CODES,
-    SEARCH_TYPE_CODES,
-    normalize_category,
-    normalize_rank,
-    normalize_search_type,
-)
 from data_loader import store  # noqa: E402
+from services.admin_relic_service import (  # noqa: E402
+    bulk_status_payload,
+    bulk_update_payload,
+    codes_payload,
+    import_relic_items,
+    iter_export_csv,
+    normalize_relic_payload,
+    parse_bbox,
+    parse_import_items,
+    split_csv_values,
+)
 
 router = APIRouter(tags=["??"])
 
@@ -36,33 +31,6 @@ def _require_db() -> None:
         raise HTTPException(503, "DB 未启用；请先运行 step07_build_db.py 并重启服务")
 
 
-def _normalize_relic_payload(raw: dict) -> dict:
-    """把中文字段(category_main / heritage_level / survey_type 等)标准化到 DB 编码;
-    已经是编码的直接保留。"""
-    p = dict(raw or {})
-    if "category_main" in p and "category" not in p:
-        p["category"] = normalize_category(p.pop("category_main"))
-    elif "category" in p:
-        p["category"] = normalize_category(p["category"])
-    if "heritage_level" in p and "rank" not in p:
-        p["rank"] = normalize_rank(p.pop("heritage_level"))
-    elif "rank" in p:
-        p["rank"] = normalize_rank(p["rank"])
-    if "survey_type" in p and "search_type" not in p:
-        p["search_type"] = normalize_search_type(p.pop("survey_type"))
-
-    # legacy 字段兼容:center_lng/lat/alt、archive_code。
-    if "center_lng" in p and "lng" not in p:
-        p["lng"] = p.pop("center_lng")
-    if "center_lat" in p and "lat" not in p:
-        p["lat"] = p.pop("center_lat")
-    if "center_alt" in p and "alt" not in p:
-        p["alt"] = p.pop("center_alt")
-    if "archive_code" in p and "code" not in p:
-        p["code"] = p.pop("archive_code")
-    return p
-
-
 @router.post("/relics")
 async def create_relic(
     payload: dict = Body(...),
@@ -71,7 +39,7 @@ async def create_relic(
     """创建文物。payload 至少包含 code / name / lng / lat。"""
     _require_db()
     try:
-        after = store.create_relic(_normalize_relic_payload(payload), actor=x_actor or "")
+        after = store.create_relic(normalize_relic_payload(payload), actor=x_actor or "")
     except ValueError as e:
         msg = str(e)
         code = 409 if "已存在" in msg else 400
@@ -92,7 +60,7 @@ async def update_relic(
         raise HTTPException(400, "缺少 expected_version（乐观锁）")
     try:
         after = store.update_relic(
-            code, _normalize_relic_payload(payload),
+            code, normalize_relic_payload(payload),
             expected_version=int(ev), actor=x_actor or "",
         )
     except ValueError as e:
@@ -171,11 +139,7 @@ async def stats_overview():
 @router.get("/codes")
 async def codes_dict():
     """国标编码字典:category / rank / search_type → 中文标签。"""
-    return {
-        "categories": [{"code": c, "label": CATEGORY_CODES[c]} for c in CATEGORY_CODES],
-        "ranks": [{"code": c, "label": RANK_CODES[c]} for c in RANK_CODES],
-        "search_types": [{"code": c, "label": SEARCH_TYPE_CODES[c]} for c in SEARCH_TYPE_CODES],
-    }
+    return codes_payload()
 
 
 @router.get("/relics-townships")
@@ -183,20 +147,6 @@ async def relics_townships():
     """后台乡镇下拉,来源为 DB 中已入库文物。"""
     _require_db()
     return {"townships": store.admin_list_townships()}
-
-
-def _parse_bbox(bbox: Optional[str]) -> Optional[tuple]:
-    """解析 'minLng,minLat,maxLng,maxLat';格式非法返回 None。"""
-    if not bbox:
-        return None
-    parts = [p.strip() for p in bbox.split(",") if p.strip()]
-    if len(parts) != 4:
-        return None
-    try:
-        mnl, mnt, mxl, mxt = [float(p) for p in parts]
-        return (mnl, mnt, mxl, mxt)
-    except ValueError:
-        return None
 
 
 @router.get("/relics")
@@ -214,15 +164,15 @@ async def list_relics(
 ):
     """后台分页列表。category / rank 支持逗号多选。"""
     _require_db()
-    categories = [c for c in (category or "").split(",") if c] or None
-    ranks = [c for c in (rank or "").split(",") if c] or None
+    categories = split_csv_values(category)
+    ranks = split_csv_values(rank)
     return store.admin_list_relics(
         page=page, size=size, search=(search or "").strip() or None,
         categories=categories, ranks=ranks,
         township=(township or "").strip() or None,
         search_type=(search_type or "").strip() or None,
         status=status,
-        bbox=_parse_bbox(bbox),
+        bbox=parse_bbox(bbox),
         order_by=order_by,
     )
 
@@ -262,15 +212,10 @@ async def bulk_update_relics(
     - 乐观锁冲突 / 不存在 / 异常逐条记录,不中断其它条目。
     """
     _require_db()
-    codes = payload.get("codes") or []
-    fields = payload.get("fields") or {}
-    if not isinstance(codes, list) or not codes:
-        raise HTTPException(400, "codes 不能为空")
-    if not isinstance(fields, dict) or not fields:
-        raise HTTPException(400, "fields 不能为空")
-    patch = _normalize_relic_payload(fields)
-    # code 不允许批量改写。
-    patch.pop("code", None)
+    try:
+        codes, patch = bulk_update_payload(payload)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     try:
         return store.admin_bulk_update(codes, patch, actor=x_actor or "")
     except ValueError as e:
@@ -285,12 +230,10 @@ async def bulk_set_status(
     """批量改状态。payload = {codes, status}。status=-1 走软删(action=delete),
     0/1 走 bulk_update(action=update)。"""
     _require_db()
-    codes = payload.get("codes") or []
-    status = payload.get("status")
-    if not isinstance(codes, list) or not codes:
-        raise HTTPException(400, "codes 不能为空")
-    if status not in (1, 0, -1):
-        raise HTTPException(400, "status 只能是 1 / 0 / -1")
+    try:
+        codes, status = bulk_status_payload(payload)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     if status == -1:
         return store.admin_bulk_delete(codes, actor=x_actor or "")
     return store.admin_bulk_update(codes, {"status": int(status)}, actor=x_actor or "")
@@ -310,32 +253,11 @@ async def export_relics(
 ):
     """按筛选或显式 codes 列表导出 CSV(UTF-8 BOM,Excel 可直接打开)。"""
     _require_db()
-    cat_list = [c for c in (category or "").split(",") if c] or None
-    rank_list = [c for c in (rank or "").split(",") if c] or None
-    code_list = [c.strip() for c in (codes or "").split(",") if c.strip()] or None
-
-    fieldnames = [
-        "code", "name",
-        "category", "category_label",
-        "rank", "rank_label",
-        "search_type", "search_type_label",
-        "era", "era_stats",
-        "lng", "lat", "alt",
-        "township", "village", "address",
-        "has_3d", "has_pdf", "has_photo", "has_boundary",
-        "photo_count", "drawing_count",
-        "status", "version", "updated_at",
-        "brief",
-    ]
+    cat_list = split_csv_values(category)
+    rank_list = split_csv_values(rank)
+    code_list = split_csv_values(codes)
 
     def _gen():
-        import io
-        buf = io.StringIO()
-        writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
-        yield "\ufeff"  # UTF-8 BOM,Excel 识别中文
-        writer.writeheader()
-        yield buf.getvalue()
-        buf.seek(0); buf.truncate(0)
         rows = store.admin_export_relics(
             search=(search or "").strip() or None,
             categories=cat_list, ranks=rank_list,
@@ -343,19 +265,10 @@ async def export_relics(
             search_type=(search_type or "").strip() or None,
             status=status,
             codes=code_list,
-            bbox=_parse_bbox(bbox),
+            bbox=parse_bbox(bbox),
             order_by=order_by,
         )
-        for r in rows:
-            row = dict(r)
-            row["category_label"] = CATEGORY_CODES.get(str(row.get("category") or ""), "")
-            row["rank_label"] = RANK_CODES.get(str(row.get("rank") or ""), "")
-            row["search_type_label"] = SEARCH_TYPE_CODES.get(str(row.get("search_type") or ""), "")
-            for k in ("has_3d", "has_pdf", "has_photo", "has_boundary"):
-                row[k] = 1 if row.get(k) else 0
-            writer.writerow(row)
-            yield buf.getvalue()
-            buf.seek(0); buf.truncate(0)
+        yield from iter_export_csv(rows)
 
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     filename = f"relics-{ts}.csv"
@@ -384,56 +297,8 @@ async def import_relics(
     """
     _require_db()
     raw = await file.read()
-    if not raw:
-        raise HTTPException(400, "空文件")
-
-    items: list[dict] = []
-    name = (file.filename or "").lower()
-    if name.endswith(".json"):
-        try:
-            data = json.loads(raw.decode("utf-8-sig"))
-        except json.JSONDecodeError as e:
-            raise HTTPException(400, f"JSON 解析失败: {e}")
-        if not isinstance(data, list):
-            raise HTTPException(400, "JSON 顶层需是数组")
-        items = data
-    elif name.endswith(".csv"):
-        import io
-        text = raw.decode("utf-8-sig")
-        reader = csv.DictReader(io.StringIO(text))
-        items = list(reader)
-    else:
-        raise HTTPException(400, "仅支持 .csv / .json")
-
-    results = {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
-    for idx, raw_row in enumerate(items, start=1):
-        p = _normalize_relic_payload(raw_row)
-        code = (p.get("code") or "").strip()
-        if not code:
-            results["skipped"] += 1
-            continue
-        try:
-            existing = store.get_relic(code)
-            if existing:
-                if mode == "create_only":
-                    results["skipped"] += 1
-                    continue
-                ev = existing.get("_version")
-                if ev is None:
-                    # legacy 字典不含 version,直接读 DB 取最新值。
-                    row = store._thread_conn().execute(
-                        "SELECT version FROM relics WHERE code = ?", (code,)
-                    ).fetchone()
-                    ev = int(row["version"]) if row else 1
-                store.update_relic(code, p, expected_version=int(ev), actor=x_actor or "import")
-                results["updated"] += 1
-            else:
-                store.create_relic(p, actor=x_actor or "import")
-                results["created"] += 1
-        except Exception as e:
-            results["failed"] += 1
-            results["errors"].append({"line": idx, "code": code, "error": str(e)})
-            if len(results["errors"]) > 50:
-                break
-
-    return results
+    try:
+        items = parse_import_items(file.filename or "", raw)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return import_relic_items(store, items, mode, actor=x_actor or "import")

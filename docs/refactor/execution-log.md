@@ -248,3 +248,24 @@
 - `npm.cmd run typecheck` in `platform/admin-vue`：通过。
 - `npm.cmd run build` in `platform/admin-vue`：通过。
 - Python compile for `platform/webgis/main.py`：通过。
+
+## 2026-05-21 Step 16 - V1.2 P0 First Pass
+
+### 做了什么
+
+- 新增 `docs/refactor/v1.2-agent-plan.md`，将下一阶段工作拆为 P0/P1/P2 任务包。
+- 后端新增 `platform/webgis/services/admin_relic_service.py`，从 Admin 文物 router 迁出字段标准化、bbox 解析、批量 payload 校验、导入解析/执行和 CSV 导出 shaping。
+- Vue Admin 新增 `platform/admin-vue/src/composables/useRelicsList.ts`，从 `Relics.vue` 迁出列表查询、筛选状态、空间筛选、多选、批量状态和导出下载逻辑。
+- `platform/scripts/run_pipeline.py` 增加 dry-run 输入/产物状态检查，实际运行会写入 `data/output/logs/pipeline_manifest.json`。
+- 新增 `tests/test_admin_relic_service.py` 和 `tests/test_pipeline_validation.py`。
+
+### 验证
+
+- Python compile：通过，覆盖 `run_pipeline.py`、`admin_relic_routes.py`、`admin_relic_service.py`。
+- P0 定向 pytest：通过，`13 passed`，覆盖 Admin relic service、pipeline orchestrator、pipeline validation、Admin router composition。
+- Pipeline `--list`：通过。
+- Pipeline `--dry-run --skip 01 --skip 05`：通过，已输出每步输入与产物状态。
+- Vue Admin typecheck：通过。
+- Vue Admin production build：通过。
+- `git diff --check`：通过。
+- 全量 pytest：未通过本机 Python 3.9 收集阶段；既有 FastAPI endpoint `str | None` 注解需要 Python 3.10+ 或 `eval_type_backport`，CI 配置为 Python 3.11。

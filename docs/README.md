@@ -9,6 +9,7 @@ V1.1 之后，文档按用途保留少量入口，避免历史说明散落在各
 ## 执行记录
 
 - [refactor/execution-log.md](refactor/execution-log.md)：本次架构调整的逐步执行记录和验证结果。
+- [refactor/v1.2-agent-plan.md](refactor/v1.2-agent-plan.md)：面向未来 agent 的下一阶段执行计划、任务包和验收命令。
 
 ## 发布
 
