@@ -12,14 +12,11 @@
 """
 from __future__ import annotations
 
-import logging
-
 from fastapi import APIRouter, HTTPException, Query, Response
 
 from data_loader import store
 
 router = APIRouter(tags=["文物"])
-log = logging.getLogger("uvicorn.error")
 
 
 # ── 新：视口查询 ────────────────────────────────────────────
@@ -153,10 +150,19 @@ async def relics_list(
 
 
 # ── 兼容旧接口 ──────────────────────────────────────────────
-@router.get("/relics", deprecated=True)
+@router.get("/relics")
 async def list_relics():
-    """全量精简列表,DEPRECATED。请改用 /api/relics/by-bbox。"""
-    log.warning("[deprecated] /api/relics 被调用，请迁移到 /api/relics/by-bbox")
+    """全量精简摘要列表(每条约 24 字段,不含简介/边界点)。
+
+    这是前端 Dashboard / FilterPanel **跨维交叉筛选**的合法数据源:它们按
+    现状/年代/行业/影响因素等维度(部分带展示变换:ERA_MAP 归并、行业取首段、
+    影响因素多值)在客户端联动,需要一次性拿到全集。地图打点另走
+    /api/relics/by-bbox(视口分页),二者分工不同 —— 本接口并非 by-bbox 的
+    旧版替代品,故不再标 deprecated。
+
+    大数据量(万条+/跨县跨省)下如需彻底去全量,改用 /api/relics/facets
+    (分面计数 + 总数)+ /api/relics/list(分页行),把交叉筛选下推到服务端。
+    """
     return store.get_relics_summary()
 
 

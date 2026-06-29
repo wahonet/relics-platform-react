@@ -99,10 +99,14 @@
 - **测试**:`tests/test_chat_context.py`(5 条,测纯函数 `assemble_system_content`)。
 - **下一次 `bash _run_tests.sh` 确认全绿**。
 
-### ▶ P1-2 前端去掉全量 `/api/relics`(下一未完成项)
-- **现状**:`platform/webgis-react/src/stores/relicsStore.ts` 用已 deprecated 的 `/api/relics` 一次性拉全量摘要(撑 `byCode` 与类别名),削弱了 `by-bbox` 视口优化。
-- **思路**:点位渲染完全交给 `platform/webgis-react/src/map/ViewportManager.ts` → `/api/relics/by-bbox`;统计/类别名改用 `/api/stats` 或 `/api/platform/config` 已下发的聚合;`byCode` 改为按需 `/api/relics/{code}` 拉详情并缓存。
-- **测试**:前端目前无单测框架(CI 仅 type-check + build)。可引入 Vitest 起步,或至少 `cd platform/webgis-react && npm run build` 验证不回归。
+### ⏹ P1-2 前端去掉全量 `/api/relics`(已决策:当前体量不做 — 2026-06-30)
+- **修正前一版的错误前提**:旧记录称 `/api/relics` 全量"削弱了 by-bbox 视口优化"——
+  二次深读前端后证伪:地图打点本就走 `by-bbox`,`all` **不参与**地图渲染。
+- **真实现状**:`all` 唯一不可约用途 = Dashboard/FilterPanel 客户端交叉筛选(含 ERA_MAP
+  归并/行业首段/影响因素多值等展示变换的维度联动);详情/照片/图纸/多边形已懒加载。
+- **决策(C+)**:当前单县体量(几百~一两千条)**不重写前端**;后端 `facets`/`list` 端点
+  作为未来上规模时的地基保留;撤销 `/api/relics` 的 deprecated 误标。完整论证 + 未来触发
+  完整 B 的条件见 `logs/2026-06-30-changelog-backend-hardening.md` §⏸。
 
 ### P1-3 AI 改检索式 RAG
 - **现状**:`platform/webgis/routers/chat.py` 把整库 + 工作日志全量塞进 system prompt(`_build_full_context` / `_build_worklog_context`),数据量大必然撑爆 token / 成本。
@@ -126,9 +130,10 @@
 
 **P1 — 性能 / 质量**
 - [x] P1-1 写路径增量(GREEN)
-- [◑] P1-2 前端去全量加载 —— **后端已铺路**:新增 `GET /api/relics/facets`(分面聚合+总数,
-  `data_admin_queries.facet_counts`,覆盖主列维度,带测试)。**前端接入仍暂缓**(架构级,
-  需 Node 验证)。详见 §4 调研结论。
+- [◑→决策] P1-2 前端去全量加载 —— **后端地基就位**:`GET /api/relics/facets`(全 9 维
+  计数 + 总数 + has_3d,`data_admin_queries.facet_counts`)+ `GET /api/relics/list`(分页
+  精简行,`list_relics_filtered`),均带测试。**前端经决策当前体量不接入**(撤销
+  `/api/relics` deprecated 误标);完整论证见 changelog(06-30)§⏸。
 - [x] P1-3 AI 上下文按规模分级注入(GREEN)
 - [x] P1-4 crs.py 回归测试(GREEN)
 
