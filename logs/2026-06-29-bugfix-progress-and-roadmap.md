@@ -134,8 +134,8 @@
 - [x] P2-a `run_pipeline._select_steps` 数值比较(修 step id ≥ "10" 隐患)+ 测试
 - [x] P2-b `step07._refresh_has_photo` 双向同步(无照片回置 0)+ 测试(`tests/test_step07_build_db.py`)
 - [x] P2-c 瓦片下载磁盘配额守护(预检 + 任务中周期检查)+ 测试
-- [ ] `codes.py` 与前端 `static/js/dict.js` 字典单源化(未做,需双源同步)
-- [ ] (可选)会话 Cookie `secure` 标志(按 HTTPS 配置)
+- [x] `codes.py` 与前端字典单源守护:新增 `tests/test_dict_sync.py`,解析 `static/js/dict.js` 与 React `utils/dict.ts`,断言 code→label 与别名同 `codes.py` 一致(漂移即 CI 失败);Vue 后台已天然从 `/api/admin/codes` 拉取。**注**:这是"强制 codes.py 为唯一真源"的守护,非物理生成前端文件(那需前端构建,留给有 Node 时)。
+- [x] 会话 Cookie `secure` 标志:`server.cookie_secure`(默认 false,HTTPS 生产置 true)+ 测试
 
 ---
 
