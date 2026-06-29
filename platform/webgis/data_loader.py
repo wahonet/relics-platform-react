@@ -30,7 +30,6 @@ import logging
 import sqlite3
 import sys
 import threading
-from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -157,16 +156,7 @@ class DataStore:
         self.drawing_map.clear()
 
         for row in self._db.execute("SELECT * FROM relics WHERE status = 1"):
-            extra = {}
-            if row["extra_json"]:
-                try:
-                    extra = json.loads(row["extra_json"]) or {}
-                except json.JSONDecodeError:
-                    pass
-            d = row_to_legacy(row, extra)
-            if self.pdf_map.get(row["code"]):
-                d["has_pdf"] = True
-                d["pdf_path"] = self.pdf_map[row["code"]]
+            d = self._legacy_from_db_row(row)
             self.relics.append(d)
             self.relics_map[row["code"]] = d
 
@@ -185,6 +175,51 @@ class DataStore:
             dw = {"archive_code": row["relic_code"], "path": row["path"]}
             self.drawing_index.append(dw)
             self.drawing_map.setdefault(row["relic_code"], []).append(dw)
+
+    def _legacy_from_db_row(self, row) -> dict:
+        """单条 DB relic 行 → 旧前端字段形状(含 extra_json 与 pdf_map 合并)。
+        与 _populate_legacy_from_db 的逐行逻辑保持一致,供增量同步复用。"""
+        extra = {}
+        if row["extra_json"]:
+            try:
+                extra = json.loads(row["extra_json"]) or {}
+            except json.JSONDecodeError:
+                pass
+        d = row_to_legacy(row, extra)
+        if self.pdf_map.get(row["code"]):
+            d["has_pdf"] = True
+            d["pdf_path"] = self.pdf_map[row["code"]]
+        return d
+
+    # ── 内存镜像增量维护 ─────────────────────────────────────
+    # 写操作(create/update/delete)后,只同步被改动的那一条,而不是全表重读。
+    # 旧实现每次写都 _populate_legacy_from_db()(O(N) 全量),批量写时退化到
+    # O(N*M);改为增量后单条写是 O(N)(仅一次列表线性查找),批量写 O(M)。
+    # photo_map / drawing_map 不在这三个写路径里变动(照片/图纸由管线/启动期载入),
+    # 故无需在此同步,与全量重读的语义一致。
+
+    def _mirror_sync_row(self, code: str, row) -> None:
+        """把单条写结果同步进内存镜像。status==1 → upsert;否则(草稿/下架)→ 移除。
+        与 _populate_legacy_from_db 只收录 status=1 的语义保持一致。"""
+        try:
+            status = int(row["status"])
+        except (KeyError, IndexError, TypeError, ValueError):
+            status = 1
+        if status != 1:
+            self._mirror_remove(code)
+            return
+        d = self._legacy_from_db_row(row)
+        self.relics_map[code] = d
+        for i, r in enumerate(self.relics):
+            if r.get("archive_code") == code:
+                self.relics[i] = d
+                return
+        self.relics.append(d)
+
+    def _mirror_remove(self, code: str) -> None:
+        """从内存镜像移除一条(就地改写 self.relics,保持同一列表对象)。"""
+        self.relics_map.pop(code, None)
+        self.relics[:] = [r for r in self.relics if r.get("archive_code") != code]
 
     # ── JSON 模式原有逻辑（完全保留） ────────────────────────
     def _load_relics(self, path: Path) -> None:
@@ -449,11 +484,14 @@ class DataStore:
 
         conn = self._thread_conn()
         if len(kw) >= 3:
+            # 按 code 关联 relics(code 唯一)。不要用 relics_fts.rowid 去接
+            # relics_rtree_map.id_int:二者只在 step07 建库时被对齐(1..N),
+            # 运行时 _fts_upsert 的 DELETE+INSERT 会让 fts.rowid 重新分配,
+            # 与 id_int 错位,导致编辑过的文物搜不到或张冠李戴。
             sql = (
                 "SELECT r.id, r.code, r.name, r.category, r.rank, r.lng, r.lat, r.has_3d "
                 "FROM relics_fts f "
-                "JOIN relics_rtree_map m ON m.id_int = f.rowid "
-                "JOIN relics r ON r.id = m.relic_id "
+                "JOIN relics r ON r.code = f.code "
                 "WHERE f.relics_fts MATCH ? AND r.status = 1 "
                 "LIMIT ?"
             )
@@ -493,9 +531,13 @@ class DataStore:
                     break
         return out
 
-    @lru_cache(maxsize=1024)
     def get_relic_full(self, code: str) -> Optional[dict]:
-        """单条完整详情,合并 extra_json。DB 模式走 DB,否则走内存。"""
+        """单条完整详情,合并 extra_json。DB 模式走 DB,否则走内存。
+
+        刻意不加 lru_cache:按唯一索引 code 查单条本就极快,而缓存会在
+        Admin create/update/delete 之后返回陈旧详情(写路径无处统一失效),
+        甚至把"曾查过的不存在 code"缓存成 None,得不偿失。
+        """
         if self._use_db:
             conn = self._thread_conn()
             row = conn.execute(
@@ -680,7 +722,7 @@ class DataStore:
         except Exception:
             conn.execute("ROLLBACK")
             raise
-        self._populate_legacy_from_db()
+        self._mirror_sync_row(code, row)
         return after
 
     def update_relic(
@@ -744,7 +786,7 @@ class DataStore:
             try: conn.execute("ROLLBACK")
             except Exception: pass
             raise
-        self._populate_legacy_from_db()
+        self._mirror_sync_row(code, row)
         return after
 
     def delete_relic(self, code: str, *, actor: str = "") -> None:
@@ -771,7 +813,7 @@ class DataStore:
             try: conn.execute("ROLLBACK")
             except Exception: pass
             raise
-        self._populate_legacy_from_db()
+        self._mirror_remove(code)
 
     def list_audit(
         self,
