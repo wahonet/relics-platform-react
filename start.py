@@ -34,7 +34,7 @@ WEBGIS_DIR = ROOT / "platform" / "webgis"
 VUE_DIR = ROOT / "platform" / "admin-vue"
 REACT_DIR = ROOT / "platform" / "webgis-react"
 
-# 后端启动需要绕过系统代理的域名(与原 start-backend.bat 保持一致)。
+# 后端启动需要绕过系统代理的域名(地图/瓦片源 + 本地回环)。
 _NO_PROXY = (
     "geo.datav.aliyun.com,overpass-api.de,overpass.kumi.systems,"
     "overpass.openstreetmap.fr,overpass.osm.ch,tile.openstreetmap.org,"
@@ -125,7 +125,7 @@ def find_npm() -> str | None:
         return npm
     print(
         f"{_c(RED)}[错误] 未找到 npm。前端需要 Node.js LTS (v18+)。{_c(RESET)}\n"
-        f"{_c(DIM)}        如只起后端,请改用 start-backend.bat / start-backend.sh。{_c(RESET)}",
+        f"{_c(DIM)}        如只起后端,可直接运行: python platform/webgis/serve.py{_c(RESET)}",
         file=sys.stderr,
     )
     return None

@@ -8,7 +8,7 @@
 > 这不是一个“clone 下来就自带真实业务数据”的仓库。`data/input/` 不进 Git，`data/output/` 只保留必要目录骨架。你需要把自己的 DOCX、边界、日志、DEM、模型等数据放进去，再跑管线或在后台手动生成。
 
 > [!IMPORTANT]
-> 日常只需要两个入口：`start-backend.bat` 和 `start-frontend.bat`。旧的编号 BAT 已经清掉了，别再找 `1-setup.bat`、`2-pipeline.bat` 那套。
+> 日常只需要一个入口：`start-all.bat`（Windows 双击或终端运行）或 `./start-all.sh`（Linux/麒麟），一键起后端 + 两个前端，日志合流在同一控制台，Ctrl+C 一次性全停。旧的编号 BAT、以及单独的 `start-backend.bat` / `start-frontend.bat` 都已合并到这里（别再找 `1-setup.bat`、`2-pipeline.bat` 那套）。
 
 > [!CAUTION]
 > 模板配置默认 `server.enable_auth: false`，后台登录接口会直接签发本地 session。要上生产或给别人访问，请改成 `true`，并把 `server.users` 里的默认密码换掉。
@@ -19,10 +19,10 @@
 
 ### 准备配置
 
-第一次启动后端时，脚本会自动把 `config.example.yaml` 复制成 `config.yaml`：
+第一次启动时，脚本会自动把 `config.example.yaml` 复制成 `config.yaml`：
 
 ```powershell
-.\start-backend.bat
+.\start-all.bat
 ```
 
 你也可以手动复制：
@@ -50,34 +50,29 @@ admin / changeme
 
 如果 `enable_auth: false`，随便填也能进后台；如果改成 `true`，就必须匹配 `server.users`。
 
-### 启动后端
+### 启动
+
+Windows 双击或在终端运行：
 
 ```powershell
-.\start-backend.bat
+.\start-all.bat
 ```
 
-脚本会优先使用 `.venv`，其次使用仓库内的 `python/`，最后才找系统 Python。依赖缺失时会自动安装 `platform/webgis/requirements.txt`。
+Linux / 麒麟：
 
-后端默认地址：
-
-```text
-http://127.0.0.1:8000/
+```bash
+./start-all.sh
 ```
 
-FastAPI 会挂载构建后的前端产物，所以访问 `8000/` 通常会跳到 `8000/app/`。这是后端集成入口，适合只启动后端时看已构建版本。
-
-### 启动前端
-
-```powershell
-.\start-frontend.bat
-```
-
-它会启动两个 Vite dev server：
+它会一次性起好三个服务，日志合流在同一控制台（Ctrl+C 一次性全停），并在 React 主应用就绪后自动打开浏览器：
 
 | 应用 | 地址 | 说明 |
 |---|---|---|
 | React WebGIS | `http://127.0.0.1:5174/` | 主地图、三维、统计、详情、AI、瓦片下载 |
 | Vue Admin | `http://127.0.0.1:5173/` | 管理后台、管线、CRUD、审计、导入导出 |
+| FastAPI 后端 | `http://127.0.0.1:8000/` | API、瓦片代理、静态挂载（含 `/app/` 和 `/admin-ui/`） |
+
+脚本会优先使用 `.venv`，其次使用仓库内的 `python/`，最后才找系统 Python；首次运行还会自动安装后端 `platform/webgis/requirements.txt` 与两个前端的 npm 依赖。
 
 端口关系别绕晕：
 
@@ -88,6 +83,8 @@ FastAPI 会挂载构建后的前端产物，所以访问 `8000/` 通常会跳到
 | `5173` | Vue Vite | Admin 开发入口，热更新，代理 API 到 `8000` |
 
 改前端看 `5174` / `5173`；只想跑集成版看 `8000/app/` / `8000/admin-ui/`。
+
+> 只想单独起某个服务（高级）：纯后端 `.venv\Scripts\python.exe platform\webgis\serve.py`；单个前端 `cd platform\webgis-react && npm.cmd run dev`（或 `platform\admin-vue`）。
 
 ## 数据放哪
 
@@ -175,8 +172,9 @@ data/
 
 ```text
 relics-platform-react/
-├─ start-backend.bat              # 后端入口
-├─ start-frontend.bat             # 前端入口
+├─ start-all.bat                  # 一键启动（Windows）
+├─ start-all.sh                   # 一键启动（Linux/麒麟）
+├─ start.py                       # 跨平台启动器（被上面两个调用）
 ├─ config.example.yaml            # 配置模板
 ├─ VERSION
 ├─ requirements-dev.txt
@@ -295,9 +293,8 @@ V1.1.0 主要是架构调整，不是业务大改。它做了三件事：
 2. 把后台前端的大页面拆出 composable 和独立样式文件。
 3. 把启动、测试、CI、发布文档收拢成稳定流程。
 
-如果你只是想跑起来，记住两条命令就够了：
+如果你只是想跑起来，记住一条命令就够了：
 
 ```powershell
-.\start-backend.bat
-.\start-frontend.bat
+.\start-all.bat
 ```
