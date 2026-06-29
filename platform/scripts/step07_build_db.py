@@ -367,13 +367,19 @@ def _scan_pdf_dir(pdf_dir: Path) -> dict[str, str]:
 
 
 def _refresh_has_photo(conn: sqlite3.Connection) -> None:
-    """根据 photos 表实际记录回填 relics.has_photo。"""
+    """按 photos 表实际记录**双向**回填 relics.has_photo:有照片置 1,无则置 0。
+
+    has_photo 的语义是"前端 /api/relics/{code}/photos 能取到照片",而照片只来自
+    photos 表。若 JSON 标了 photo_count>0 但照片实际没入库(如未跑 step03),
+    旧实现的 ELSE 分支会把 has_photo 留作 1 → 前端显示有照片却取到空。
+    这里统一以 photos 表为准。(photo_count 字段仍保留 JSON 上报的数量。)
+    """
     conn.execute(
         """
         UPDATE relics
            SET has_photo = CASE
                 WHEN EXISTS (SELECT 1 FROM photos p WHERE p.relic_code = relics.code) THEN 1
-                ELSE has_photo
+                ELSE 0
            END
         """
     )

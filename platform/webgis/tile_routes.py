@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import math
+import shutil
 import sys
 import threading
 import time
@@ -56,6 +57,36 @@ TILE_MIN_ZOOM = 1
 TILE_MAX_ZOOM = 17
 
 _get_config: ConfigGetter = lambda: {}
+
+
+# ── 磁盘配额守护 ──────────────────────────────────────────────
+# 批量下载/预缓存可能写入海量瓦片;无守护会把磁盘打满。下载前(及任务执行中
+# 周期性)校验剩余空间,低于阈值则拒绝/中止。阈值来自 config.tiles.min_free_disk_mb。
+_DEFAULT_MIN_FREE_MB = 500
+
+
+def _min_free_bytes() -> int:
+    """下载所需的最小剩余磁盘空间(字节)。来自 config.tiles.min_free_disk_mb,默认 500MB。"""
+    cfg = _get_config() or {}
+    tiles_cfg = (cfg.get("tiles") or {}) if isinstance(cfg, dict) else {}
+    try:
+        mb = float(tiles_cfg.get("min_free_disk_mb", _DEFAULT_MIN_FREE_MB))
+    except (TypeError, ValueError):
+        mb = float(_DEFAULT_MIN_FREE_MB)
+    return int(max(0.0, mb) * 1024 * 1024)
+
+
+def _free_bytes(path: Path = TILE_CACHE_DIR) -> int:
+    """瓦片缓存所在盘的可用字节;取不到时返回极大值(宁可放行,不误伤)。"""
+    try:
+        return shutil.disk_usage(str(path)).free
+    except Exception:
+        return 1 << 62
+
+
+def _download_allowed(free_bytes: int, min_free_bytes: int) -> bool:
+    """纯判定:当前剩余空间是否够继续下载。"""
+    return free_bytes >= min_free_bytes
 
 
 def _parse_provider_list(providers: str) -> list[str]:
@@ -278,7 +309,12 @@ def _job_gc():
 def _run_download_job(jid: str, tasks: list):
     import concurrent.futures
 
+    min_free = _min_free_bytes()
+    abort = {"stop": False, "reason": None}
+
     def _dl_one(args):
+        if abort["stop"]:
+            return False, 0
         prov, z, x, y, cp = args
         try:
             data = _fetch_tile(prov, z, x, y)
@@ -292,7 +328,14 @@ def _run_download_job(jid: str, tasks: list):
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
+            done = 0
             for ok, nbytes in pool.map(_dl_one, tasks):
+                done += 1
+                # 周期性校验磁盘:低于阈值则置 abort,后续已提交线程读到即跳过写入。
+                if (not abort["stop"] and done % 64 == 0
+                        and not _download_allowed(_free_bytes(), min_free)):
+                    abort["stop"] = True
+                    abort["reason"] = "磁盘剩余空间不足，已中止下载"
                 with DOWNLOAD_JOBS_LOCK:
                     job = DOWNLOAD_JOBS.get(jid)
                     if job is None:
@@ -302,7 +345,10 @@ def _run_download_job(jid: str, tasks: list):
                         job["bytes"] += nbytes
                     else:
                         job["failed"] += 1
-        _job_update(jid, status="done", finished_at=time.time())
+        if abort["stop"]:
+            _job_update(jid, status="error", error=abort["reason"], finished_at=time.time())
+        else:
+            _job_update(jid, status="done", finished_at=time.time())
     except Exception as e:
         _job_update(jid, status="error", error=str(e), finished_at=time.time())
 
@@ -428,6 +474,11 @@ def register_tile_routes(app: FastAPI, get_config: ConfigGetter) -> None:
                 else:
                     tasks.append((provider, tz, tx, ty, cp))
 
+        if tasks and not _download_allowed(_free_bytes(), _min_free_bytes()):
+            return {"error": "磁盘剩余空间不足，已取消预缓存",
+                    "free_bytes": _free_bytes(), "min_free_bytes": _min_free_bytes(),
+                    "skipped": skipped}
+
         def _dl_one(args):
             prov, z, x, y, cp = args
             try:
@@ -501,6 +552,11 @@ def register_tile_routes(app: FastAPI, get_config: ConfigGetter) -> None:
                         skipped += 1
                     else:
                         tasks.append((prov, tz, tx, ty, cp))
+
+        if tasks and not _download_allowed(_free_bytes(), _min_free_bytes()):
+            return {"error": "磁盘剩余空间不足，已取消下载",
+                    "free_bytes": _free_bytes(), "min_free_bytes": _min_free_bytes(),
+                    "skipped": skipped, "need": len(tasks)}
 
         total = len(tasks) + skipped
         bbox_tuple = [west, south, east, north]

@@ -24,6 +24,32 @@ def test_select_steps_supports_range_and_skip():
     assert [step["id"] for step in selected] == ["03", "04", "05", "07"]
 
 
+def test_select_steps_numeric_compare_with_double_digit_ids(monkeypatch):
+    """字符串比较下 '9' <= '10' 为 False;数值比较修正后区间应正确。"""
+    steps = [{"id": f"{i:02d}", "script": f"s{i}.py"} for i in range(1, 13)]  # 01..12
+    monkeypatch.setattr(run_pipeline, "STEPS", steps)
+
+    args = SimpleNamespace(only_id=None, from_id="9", to_id="11", skip_ids=[])
+    selected = [s["id"] for s in run_pipeline._select_steps(args)]
+    assert selected == ["09", "10", "11"]  # 含两位 id,且 09 未被错误排除
+
+
+def test_select_steps_id_is_zero_pad_insensitive(monkeypatch):
+    steps = [{"id": f"{i:02d}", "script": f"s{i}.py"} for i in range(1, 13)]
+    monkeypatch.setattr(run_pipeline, "STEPS", steps)
+
+    # only '1' 应等价于 '01';skip '10'(两位)应命中 id '10'。
+    only = run_pipeline._select_steps(
+        SimpleNamespace(only_id="1", from_id=None, to_id=None, skip_ids=[])
+    )
+    assert [s["id"] for s in only] == ["01"]
+
+    skipped = run_pipeline._select_steps(
+        SimpleNamespace(only_id=None, from_id="08", to_id="12", skip_ids=["10"])
+    )
+    assert [s["id"] for s in skipped] == ["08", "09", "11", "12"]
+
+
 def test_dry_run_does_not_require_config(monkeypatch):
     class DummyLogger:
         def info(self, *args, **kwargs):

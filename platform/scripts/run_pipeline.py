@@ -231,17 +231,32 @@ def _list_steps() -> None:
         print(f"  {s['id']}  {tag}  {s['name']}  ({s['script']})")
 
 
+def _id_num(value) -> int:
+    """把 step id('01' / '7' / 7) 解析成整数,用于数值比较。
+
+    避免字符串比较的陷阱:一旦步骤数到两位,'9' <= '10' 会是 False,
+    导致 --from/--to 选择错误。解析失败返回 -1(宽松降级,不抛错)。
+    """
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return -1
+
+
 def _select_steps(args: argparse.Namespace) -> list[dict]:
-    skip = set(args.skip_ids or [])
+    skip = {_id_num(x) for x in (args.skip_ids or [])}
     if args.only_id:
-        return [s for s in STEPS if s["id"] == args.only_id and s["id"] not in skip]
+        only = _id_num(args.only_id)
+        return [s for s in STEPS if _id_num(s["id"]) == only and _id_num(s["id"]) not in skip]
     selected = STEPS[:]
     if args.from_id:
-        selected = [s for s in selected if s["id"] >= args.from_id]
+        lo = _id_num(args.from_id)
+        selected = [s for s in selected if _id_num(s["id"]) >= lo]
     if args.to_id:
-        selected = [s for s in selected if s["id"] <= args.to_id]
+        hi = _id_num(args.to_id)
+        selected = [s for s in selected if _id_num(s["id"]) <= hi]
     if skip:
-        selected = [s for s in selected if s["id"] not in skip]
+        selected = [s for s in selected if _id_num(s["id"]) not in skip]
     return selected
 
 
