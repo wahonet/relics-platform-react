@@ -94,3 +94,22 @@ def test_facet_counts_legacy_respects_filter():
     assert res["total"] == 1
     cat = {f["code"]: f["count"] for f in res["facets"]["category"]}
     assert cat["0300"] == 1 and cat["0100"] == 0
+
+
+def test_facet_counts_legacy_has_3d_and_extra_keys():
+    store = _store_with_legacy_relics()
+    res = store.facet_counts()
+    assert res["has_3d"] == 1   # A001 has_3d True
+    # extra_json 维度键存在(legacy 数据未设这些字段 → 空列表)。
+    for k in ("condition", "ownership", "industry", "risk_factors"):
+        assert k in res["facets"] and res["facets"][k] == []
+
+
+def test_list_relics_filtered_legacy():
+    store = _store_with_legacy_relics()
+    res = store.list_relics_filtered()
+    assert res["total"] == 2
+    assert {r["code"] for r in res["data"]} == {"A001", "B002"}
+
+    one = store.list_relics_filtered(township="Town B")
+    assert one["total"] == 1 and one["data"][0]["code"] == "B002"

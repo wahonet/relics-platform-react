@@ -256,3 +256,47 @@ def test_facets_township_grouping_after_edit(store):
     era = {f["name"]: f["count"] for f in res["facets"]["era_stats"]}
     assert era.get("明") == 1
 
+
+def test_facets_extra_json_dims_and_has_3d(store):
+    # extra_json 维度 + has_3d 计数(单次写入 A001 的多个字段)。
+    store.update_relic(
+        "A001",
+        {
+            "has_3d": 1,
+            "extra_json": {
+                "condition_level": "较差",
+                "ownership_type": "国有",
+                "industry": "文化,旅游",          # 取第一段 → 文化
+                "risk_factors": "自然侵蚀、人为破坏",  # 多值 → 各计 1
+            },
+        },
+        expected_version=1, actor="t",
+    )
+    res = store.facet_counts()
+    assert res["has_3d"] == 1
+    assert {f["name"]: f["count"] for f in res["facets"]["condition"]}.get("较差") == 1
+    assert {f["name"]: f["count"] for f in res["facets"]["ownership"]}.get("国有") == 1
+    ind = {f["name"]: f["count"] for f in res["facets"]["industry"]}
+    assert ind.get("文化") == 1 and "旅游" not in ind     # 仅第一段
+    risk = {f["name"]: f["count"] for f in res["facets"]["risk_factors"]}
+    assert risk.get("自然侵蚀") == 1 and risk.get("人为破坏") == 1
+
+
+# ── B(Stage A):公开分页列表 list_relics_filtered ────────────
+def test_relics_list_basic_and_fields(store):
+    res = store.list_relics_filtered()
+    assert res["total"] == 3 and res["page"] == 1
+    codes = {r["code"] for r in res["data"]}
+    assert codes == {"A001", "A002", "A003"}
+    row = next(r for r in res["data"] if r["code"] == "A001")
+    assert set(row) == {"code", "name", "category", "era", "township", "has_3d"}
+    assert row["category"] == "0300"
+
+
+def test_relics_list_filter_and_paging(store):
+    assert store.list_relics_filtered(categories=["0300"])["total"] == 1
+    p1 = store.list_relics_filtered(size=2, page=1)
+    p2 = store.list_relics_filtered(size=2, page=2)
+    assert len(p1["data"]) == 2 and len(p2["data"]) == 1
+    assert p1["total"] == 3 and p2["total"] == 3
+

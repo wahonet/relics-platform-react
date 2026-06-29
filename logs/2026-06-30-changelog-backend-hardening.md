@@ -1,7 +1,7 @@
 # CHANGELOG — 后端加固轮次(2026-06-29 ~ 06-30)
 
 一轮针对后端的正确性 / 安全 / 健壮性加固。**每项改动均带回归测试**;后端测试套件
-从 **34 → ~109** 全绿(以 `bash _run_tests.sh` 为准)。下面按主题汇总,可直接用于
+从 **34 → 121** 全绿(以 `bash _run_tests.sh` 为准)。下面按主题汇总,可直接用于
 release notes 或 PR 描述。
 
 > 运行/验证:仓库根 `bash _run_tests.sh`(WSL + Python 3.14;脚本会自动装依赖并跑
@@ -59,14 +59,23 @@ release notes 或 PR 描述。
   `utils/dict.ts`,断言 code→label 与别名同 `codes.py` 一致(漂移即 CI 失败);
   Vue 后台已从 `/api/admin/codes` 拉取(天然单源)。`tests/test_dict_sync.py`。
 
-## ✨ 新增(为前端去全量铺路)
+## ✨ 新增(分面 / 列表端点 —— 未来去全量的地基)
 
 - **分面聚合端点** `GET /api/relics/facets`:按当前筛选(category/rank/township/
-  search_type/q/bbox)返回各维计数 + 总数,供 Dashboard/FilterPanel 联动而无需全量
-  入内存。覆盖**主列**维度(category/rank/search_type/township/era_stats);
-  condition/ownership/industry/risk_factors 落在 `extra_json`,暂未分面(需 json_extract)。
-  `data_admin_queries.facet_counts` + `data_loader` 委托 + `routers/relics.py` 路由。
-  **前端尚未接入**(P1-2 暂缓,需 Node 环境验证)。
+  search_type/q/bbox)返回**全 9 维计数 + 总数 + has_3d**。除主列维度
+  (category/rank/search_type/township/era_stats)外,**新增** condition/ownership/
+  industry/risk_factors —— 它们落在 `extra_json`,对**过滤后子集**做一次内存归并得到
+  (risk_factors 多值逐项计数,industry 取首段,与前端 dict 变换一致)。**注**:这些
+  维度仅用于"计数/展示",**不进过滤 WHERE**(WHERE 只认 category/rank/township/
+  search_type/bbox 这些干净索引列),故**不与数据管线的存储格式耦合**。
+- **分页列表端点** `GET /api/relics/list`:同一筛选下返回精简行
+  `{code,name,category,era,township,has_3d}`,分页,可替代全量 `/api/relics` 做结果列表。
+- 实现:`data_admin_queries.facet_counts / list_relics_filtered` + `data_loader` 委托
+  + `routers/relics.py` 路由;DB 与 JSON 回退双路径,均带测试
+  (`test_db_store_writes` / `test_data_admin_delegates` / `test_route_relics`)。
+
+  **定位**:这两个端点是**未来**(万条+/跨县跨省)前端彻底去全量的接入点;当前体量
+  下前端不接入(见 §⏸ 的调研结论)。
 
 ## 🧪 测试
 
@@ -84,9 +93,25 @@ release notes 或 PR 描述。
 | `api.siliconflow.full_context_max_relics` | 1500 | AI 全量清单注入阈值 |
 | `tiles.min_free_disk_mb` | 500 | 瓦片下载磁盘守护阈值 |
 
-## ⏸ 暂缓
+## ⏸ 暂缓 / 决策记录
 
-- **P1-2 前端去掉全量 `/api/relics`**:经调研为架构级改动(该 React 应用是"全量入内存
-  + 客户端交叉筛选"的分析型 UI),`/api/stats` 无法替代联动;真去全量需前端重写,且
-  本环境无 Node 无法验证。后端已先行提供 `/api/relics/facets` 作为接入点。
+- **P1-2 前端去掉全量 `/api/relics`**:**经二次深读前端,判定当前体量(单县,几百~
+  一两千条)不做**。理由链:
+  - 地图打点**早已**走 `/api/relics/by-bbox`(视口分页),**不**从全量内存集渲染;
+    详情/照片/图纸/多边形**已**懒加载。即全量 `all` **唯一**不可约的用途 =
+    Dashboard + FilterPanel 的**客户端交叉筛选**(按现状/年代/行业/影响因素联动,带
+    ERA_MAP 归并、行业取首段、影响因素多值等展示变换)。
+  - `get_relics_summary()` 本就精简(约 24 字段、不含简介/边界点),全量负载不大。
+  - 若把计数改走 `facets` 却仍保留 `all` 给上述维度,会出现**两个口径不一致的计数源**:
+    服务端 `total` 只按 category/rank/township/search_type/bbox 过滤,客户端还按
+    extra_json 维度过滤 → 勾选"保存现状"等筛选时 Toolbar 与面板数字对不上。
+  - 要消除分裂,须把 era/industry/risk 的**过滤**也下推服务端(json_extract LIKE
+    近似,且会反向把存储格式焊进查询),即滑向"完整 B";其近似语义无法在本环境手测交互。
+  - **结论(C+)**:`facets`/`list` 端点作为**未来真上规模时**做完整 B 的地基保留;当前
+    前端一行不动。顺手撤销 `/api/relics` 的 `deprecated` 误标 + 启动告警(它是交叉筛选的
+    合法数据源,并非 by-bbox 旧版替代品;`routers/relics.py`)。
+  - **未来触发完整 B 的条件**:数据量到**万条以上**(跨县/全市/全省),或浏览器内存/首屏
+    传输成为可感瓶颈时。届时:facets 驱动 Dashboard、list 驱动结果列表、era 桶反查 +
+    industry/risk 服务端近似过滤,彻底移除 `all`;需在有 Node 的环境做交互手测验收。
+
 - **`codes.py` → 前端字典物理生成**:本轮以漂移守护测试"强制单源",未做构建期生成。
