@@ -18,5 +18,4 @@ V1.1 之后，文档按用途保留少量入口，避免历史说明散落在各
 ## 日常入口
 
 - 根目录 README：面向使用者和开发者的主说明。
-- `start-backend.bat`：启动 FastAPI。
-- `start-frontend.bat`：启动 React WebGIS 与 Vue Admin。
+- `start-all.bat`（Windows）/ `start-all.sh`（Linux/麒麟）：一键启动后端 + React WebGIS + Vue Admin，由跨平台 `start.py` 实现。
