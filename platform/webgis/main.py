@@ -33,6 +33,7 @@ from terrain_provider import load_dem  # noqa: E402
 from terrain_routes import register_terrain_routes  # noqa: E402
 from tile_routes import TILE_CACHE_DIR, register_tile_routes  # noqa: E402
 from web_security import (  # noqa: E402
+    resolve_cookie_secure,
     resolve_cors_origins,
     resolve_session_secret,
     sign_session,
@@ -182,6 +183,8 @@ except (TypeError, ValueError):
 if _SECRET_SOURCE == "ephemeral":
     print("[auth] 未配置 server.secret_key / 环境变量 RELICS_SECRET_KEY，"
           "本次使用进程内随机会话密钥(重启后需重新登录)。生产请配置固定密钥。")
+# 会话 Cookie 是否带 Secure(仅 HTTPS)。默认 False,HTTPS 生产置 true。
+_COOKIE_SECURE = resolve_cookie_secure(_BOOT_CFG)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
@@ -450,6 +453,7 @@ def _login_response(username: str = "admin") -> JSONResponse:
         httponly=True,
         samesite="lax",
         path="/",
+        secure=_COOKIE_SECURE,                # HTTPS 生产置 true(config: server.cookie_secure)
         max_age=_SESSION_MAX_AGE,             # None → 会话级 Cookie(关浏览器即失效)
     )
     return resp

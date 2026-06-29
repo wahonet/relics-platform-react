@@ -66,6 +66,21 @@ def resolve_cors_origins(cfg: dict | None) -> List[str]:
     return _dedupe(origins)
 
 
+def resolve_cookie_secure(cfg: dict | None) -> bool:
+    """会话 Cookie 是否带 Secure 标志(仅 HTTPS 传输)。
+
+    来自 `server.cookie_secure`(bool 或 true/false/yes/no/on/off 字符串),
+    默认 False —— demo / 内网常跑在 http,强开 Secure 会让 Cookie 发不出去、
+    直接登录失败。上 HTTPS 生产环境时置 true。
+    """
+    val = ((cfg or {}).get("server") or {}).get("cookie_secure", False)
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.strip().lower() in ("true", "yes", "on", "1")
+    return False
+
+
 def _dedupe(items: List[str]) -> List[str]:
     seen: set[str] = set()
     out: List[str] = []

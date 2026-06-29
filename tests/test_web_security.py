@@ -9,6 +9,7 @@ import base64
 import json
 
 from web_security import (
+    resolve_cookie_secure,
     resolve_cors_origins,
     resolve_session_secret,
     sign_session,
@@ -106,3 +107,18 @@ def test_resolve_secret_priority(monkeypatch):
     monkeypatch.delenv("RELICS_SECRET_KEY", raising=False)
     sec, src = resolve_session_secret({"server": {"secret_key": "${RELICS_SECRET_KEY}"}})
     assert src == "ephemeral" and len(sec) >= 16  # 占位符视为未配置 → 随机
+
+
+# ── Cookie Secure 标志(P2)────────────────────────────────────
+def test_cookie_secure_defaults_false():
+    assert resolve_cookie_secure(None) is False
+    assert resolve_cookie_secure({}) is False
+    assert resolve_cookie_secure({"server": {}}) is False
+
+
+def test_cookie_secure_accepts_bool_and_strings():
+    assert resolve_cookie_secure({"server": {"cookie_secure": True}}) is True
+    assert resolve_cookie_secure({"server": {"cookie_secure": "true"}}) is True
+    assert resolve_cookie_secure({"server": {"cookie_secure": "ON"}}) is True
+    assert resolve_cookie_secure({"server": {"cookie_secure": "no"}}) is False
+    assert resolve_cookie_secure({"server": {"cookie_secure": "garbage"}}) is False
