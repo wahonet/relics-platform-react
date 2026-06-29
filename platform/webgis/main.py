@@ -128,7 +128,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Relics Platform", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Relics Platform", version="1.1.5", lifespan=lifespan)
 
 _PUBLIC_PREFIXES = (
     "/login",

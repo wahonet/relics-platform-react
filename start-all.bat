@@ -5,7 +5,7 @@ title Relics Platform - Full Stack (Backend + Frontends)
 
 cd /d "%~dp0"
 
-REM Pick a Python interpreter (matches start-backend.bat).
+REM Pick a Python interpreter (.venv / embedded python\ / system).
 if exist "%~dp0.venv\Scripts\python.exe" (
     set "PYTHON=%~dp0.venv\Scripts\python.exe"
     echo [OK] Using project virtual environment (.venv)

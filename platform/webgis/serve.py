@@ -1,7 +1,7 @@
-"""WebGIS 启动入口。
+"""WebGIS 后端启动入口。
 
-由 `start-backend.bat` 调用:读取 config.yaml 拿 host/port,然后起 uvicorn,
-避免在 .bat 脚本里解析 YAML。
+由 start.py(经 start-all.bat / start-all.sh)调用,也可单独运行起纯后端:
+读取 config.yaml 拿 host/port,然后起 uvicorn,避免在启动脚本里解析 YAML。
 """
 from __future__ import annotations
 
@@ -81,7 +81,7 @@ def main() -> int:
         _open_browser_delayed(browser_url, delay=2.0)
     elif not dev_app:
         print("[INFO] 未检测到前端构建产物(dist),不自动打开浏览器。")
-        print("       开发模式请运行 start-frontend.bat(5173=Vue 后台 / 5174=React WebGIS)。")
+        print("       开发模式请运行 start-all.bat / start-all.sh(同时起后端 + 5173 Vue 后台 + 5174 React WebGIS)。")
 
     import uvicorn
     uvicorn.run(
