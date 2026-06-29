@@ -1,0 +1,7 @@
+# 跨平台行尾约定(本仓库需同时支持 Windows 与麒麟/Linux)
+#   *.sh  强制 LF  —— 麒麟等 Linux 上 CRLF 会导致 bash 报 $'\r' 错误
+#   *.bat/*.cmd  CRLF —— Windows 批处理惯例
+# 其余源码文件沿用各人 core.autocrlf 默认行为,不做强制。
+*.sh   text eol=lf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
