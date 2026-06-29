@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Iterable, Optional
 
 
@@ -364,34 +365,8 @@ def admin_list_townships(self) -> list[str]:
     return [r["township"] for r in rows]
 
 
-def facet_counts(
-    self,
-    *,
-    search: Optional[str] = None,
-    categories: Optional[Iterable[str]] = None,
-    ranks: Optional[Iterable[str]] = None,
-    township: Optional[str] = None,
-    search_type: Optional[str] = None,
-    bbox: Optional[tuple] = None,
-) -> dict:
-    """当前筛选下的分面计数 + 总数,供前端 Dashboard/FilterPanel 不全量入内存即可联动。
-
-    返回 {total, facets:{category[], rank[], search_type[], township[], era_stats[]}}。
-    - category/rank/search_type:按国标编码全集 0 填充(顺序固定,便于前端直接渲染)。
-    - township/era_stats:仅返回出现过的值,按计数降序。
-    - 仅统计 status=1(在册)记录;口径与公开地图一致。
-
-    只覆盖**主列**维度;condition_level/ownership_type/industry/risk_factors 落在
-    extra_json,需 json_extract 且无索引,暂不在此分面(见 relics 路由说明)。
-    """
-    from codes import CATEGORY_CODES, RANK_CODES, SEARCH_TYPE_CODES
-
-    if not self._use_db:
-        return _facet_counts_legacy(
-            self, search=search, categories=categories, ranks=ranks,
-            township=township, search_type=search_type,
-        )
-
+def _facet_where(search, categories, ranks, township, search_type, bbox):
+    """构造公开查询(facets / list)共用的 WHERE。固定 status=1。返回 (where_sql, params)。"""
     where = ["r.status = 1"]
     params: list = []
     if search:
@@ -425,14 +400,73 @@ def facet_counts(
             params.extend([mnl, mxl, mnt, mxt])
         except (TypeError, ValueError):
             pass
+    return " WHERE " + " AND ".join(where), params
 
-    where_sql = " WHERE " + " AND ".join(where)
+
+def _tally(d: dict, value) -> None:
+    v = (str(value).strip() if value is not None else "")
+    if v:
+        d[v] = d.get(v, 0) + 1
+
+
+def _first_token(value) -> str:
+    """行业取第一段(与前端 DIMS.industry 的 transform 一致)。"""
+    if not value:
+        return ""
+    s = str(value)
+    for sep in ("，", "、", ","):
+        s = s.replace(sep, ",")
+    parts = [p.strip() for p in s.split(",") if p.strip()]
+    return parts[0] if parts else ""
+
+
+def _split_multi(value) -> list[str]:
+    """影响因素是多值字段,按 ,，、 拆开。"""
+    if not value:
+        return []
+    s = str(value)
+    for sep in ("，", "、"):
+        s = s.replace(sep, ",")
+    return [p.strip() for p in s.split(",") if p.strip()]
+
+
+def facet_counts(
+    self,
+    *,
+    search: Optional[str] = None,
+    categories: Optional[Iterable[str]] = None,
+    ranks: Optional[Iterable[str]] = None,
+    township: Optional[str] = None,
+    search_type: Optional[str] = None,
+    bbox: Optional[tuple] = None,
+) -> dict:
+    """当前筛选下的分面计数 + 总数 + has_3d 计数,供前端不全量入内存即可联动。
+
+    返回 {total, has_3d, facets:{category[], rank[], search_type[], township[],
+          era_stats[], condition[], ownership[], industry[], risk_factors[]}}。
+    - category/rank/search_type:按国标编码全集 0 填充(顺序固定)。
+    - 其余:仅返回出现值,按计数降序。
+    - condition/ownership/industry/risk_factors 落在 extra_json,对**过滤后**的子集
+      做一次内存归并得到(risk_factors 为多值,逐项计数)。
+    - 仅统计 status=1(在册)记录。
+    """
+    from codes import CATEGORY_CODES, RANK_CODES, SEARCH_TYPE_CODES
+
+    if not self._use_db:
+        return _facet_counts_legacy(
+            self, search=search, categories=categories, ranks=ranks,
+            township=township, search_type=search_type,
+        )
+
+    where_sql, params = _facet_where(search, categories, ranks, township, search_type, bbox)
     conn = self._thread_conn()
 
-    total_row = conn.execute(
-        f"SELECT COUNT(*) AS n FROM relics AS r{where_sql}", params
+    agg = conn.execute(
+        f"SELECT COUNT(*) AS n, SUM(CASE WHEN has_3d=1 THEN 1 ELSE 0 END) AS n3d "
+        f"FROM relics AS r{where_sql}", params
     ).fetchone()
-    total = int(total_row["n"]) if total_row else 0
+    total = int(agg["n"]) if agg else 0
+    has_3d = int(agg["n3d"] or 0) if agg else 0
 
     def _group(col: str) -> dict:
         rows = conn.execute(
@@ -447,14 +481,35 @@ def facet_counts(
     twn_c = _group("township")
     era_c = _group("era_stats")
 
+    # extra_json 维度:对过滤后子集一次归并。
+    cond_c: dict = {}; own_c: dict = {}; ind_c: dict = {}; risk_c: dict = {}
+    for row in conn.execute(f"SELECT r.extra_json AS ej FROM relics AS r{where_sql}", params):
+        ej = row["ej"]
+        if not ej:
+            continue
+        try:
+            d = json.loads(ej) or {}
+        except json.JSONDecodeError:
+            continue
+        _tally(cond_c, d.get("condition_level"))
+        _tally(own_c, d.get("ownership_type"))
+        _tally(ind_c, _first_token(d.get("industry")))
+        for rf in _split_multi(d.get("risk_factors")):
+            _tally(risk_c, rf)
+
     return {
         "total": total,
+        "has_3d": has_3d,
         "facets": {
             "category": [{"code": c, "count": cat_c.get(c, 0)} for c in CATEGORY_CODES],
             "rank": [{"code": c, "count": rank_c.get(c, 0)} for c in RANK_CODES],
             "search_type": [{"code": c, "count": st_c.get(c, 0)} for c in SEARCH_TYPE_CODES],
             "township": _sorted_named(twn_c),
             "era_stats": _sorted_named(era_c),
+            "condition": _sorted_named(cond_c),
+            "ownership": _sorted_named(own_c),
+            "industry": _sorted_named(ind_c),
+            "risk_factors": _sorted_named(risk_c),
         },
     }
 
@@ -478,8 +533,9 @@ def _facet_counts_legacy(
     rank_set = {str(v) for v in ranks} if ranks else None
     s = (search or "").strip()
 
-    total = 0
+    total = 0; has_3d = 0
     cat_c: dict = {}; rank_c: dict = {}; st_c: dict = {}; twn_c: dict = {}; era_c: dict = {}
+    cond_c: dict = {}; own_c: dict = {}; ind_c: dict = {}; risk_c: dict = {}
     for r in self.relics:
         code = (r.get("archive_code") or "").strip()
         name = (r.get("name") or "").strip()
@@ -497,23 +553,102 @@ def _facet_counts_legacy(
         if search_type and st != str(search_type):
             continue
         total += 1
+        if r.get("has_3d"):
+            has_3d += 1
         cat_c[c] = cat_c.get(c, 0) + 1
         rank_c[rk] = rank_c.get(rk, 0) + 1
         st_c[st] = st_c.get(st, 0) + 1
-        twn = (r.get("township") or "").strip()
-        if twn:
-            twn_c[twn] = twn_c.get(twn, 0) + 1
-        era = (r.get("era_stats") or "").strip()
-        if era:
-            era_c[era] = era_c.get(era, 0) + 1
+        _tally(twn_c, r.get("township"))
+        _tally(era_c, r.get("era_stats"))
+        _tally(cond_c, r.get("condition_level"))
+        _tally(own_c, r.get("ownership_type"))
+        _tally(ind_c, _first_token(r.get("industry")))
+        for rf in _split_multi(r.get("risk_factors")):
+            _tally(risk_c, rf)
 
     return {
         "total": total,
+        "has_3d": has_3d,
         "facets": {
             "category": [{"code": c, "count": cat_c.get(c, 0)} for c in CATEGORY_CODES],
             "rank": [{"code": c, "count": rank_c.get(c, 0)} for c in RANK_CODES],
             "search_type": [{"code": c, "count": st_c.get(c, 0)} for c in SEARCH_TYPE_CODES],
             "township": _sorted_named(twn_c),
             "era_stats": _sorted_named(era_c),
+            "condition": _sorted_named(cond_c),
+            "ownership": _sorted_named(own_c),
+            "industry": _sorted_named(ind_c),
+            "risk_factors": _sorted_named(risk_c),
         },
     }
+
+
+def list_relics_filtered(
+    self,
+    *,
+    search: Optional[str] = None,
+    categories: Optional[Iterable[str]] = None,
+    ranks: Optional[Iterable[str]] = None,
+    township: Optional[str] = None,
+    search_type: Optional[str] = None,
+    bbox: Optional[tuple] = None,
+    page: int = 1,
+    size: int = 50,
+) -> dict:
+    """公开分页列表:返回当前筛选下的精简文物行(供 FilterPanel 结果列表)。
+    每行 {code,name,category,era,township,has_3d};status=1。"""
+    page = max(1, int(page))
+    size = max(1, min(int(size), 200))
+
+    if not self._use_db:
+        from codes import normalize_category, normalize_rank, normalize_search_type
+        cat_set = {str(v) for v in categories} if categories else None
+        rank_set = {str(v) for v in ranks} if ranks else None
+        s = (search or "").strip()
+        out = []
+        for r in self.relics:
+            code = (r.get("archive_code") or "").strip()
+            name = (r.get("name") or "").strip()
+            if s and s not in code and s not in name:
+                continue
+            c = normalize_category(r.get("category_main"))
+            rk = normalize_rank(r.get("heritage_level"))
+            st = normalize_search_type(r.get("survey_type"))
+            if cat_set and c not in cat_set:
+                continue
+            if rank_set and rk not in rank_set:
+                continue
+            if township and (r.get("township") or "") != township:
+                continue
+            if search_type and st != str(search_type):
+                continue
+            out.append({
+                "code": code, "name": name, "category": c,
+                "era": r.get("era") or "",
+                "township": r.get("township") or "",
+                "has_3d": bool(r.get("has_3d")),
+            })
+        total = len(out)
+        lo = (page - 1) * size
+        return {"data": out[lo:lo + size], "total": total, "page": page, "size": size}
+
+    where_sql, params = _facet_where(search, categories, ranks, township, search_type, bbox)
+    conn = self._thread_conn()
+    total_row = conn.execute(
+        f"SELECT COUNT(*) AS n FROM relics AS r{where_sql}", params
+    ).fetchone()
+    total = int(total_row["n"]) if total_row else 0
+    rows = conn.execute(
+        f"SELECT r.code, r.name, r.category, r.era, r.township, r.has_3d "
+        f"FROM relics AS r{where_sql} ORDER BY r.code LIMIT ? OFFSET ?",
+        [*params, size, (page - 1) * size],
+    ).fetchall()
+    data = [
+        {
+            "code": r["code"], "name": r["name"], "category": r["category"],
+            "era": r["era"] or "", "township": r["township"] or "",
+            "has_3d": bool(r["has_3d"]),
+        }
+        for r in rows
+    ]
+    return {"data": data, "total": total, "page": page, "size": size}

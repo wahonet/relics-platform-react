@@ -1094,6 +1094,30 @@ class DataStore:
             bbox=bbox,
         )
 
+    def list_relics_filtered(
+        self,
+        *,
+        search: Optional[str] = None,
+        categories: Optional[Iterable[str]] = None,
+        ranks: Optional[Iterable[str]] = None,
+        township: Optional[str] = None,
+        search_type: Optional[str] = None,
+        bbox: Optional[tuple] = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> dict:
+        return data_admin_queries.list_relics_filtered(
+            self,
+            search=search,
+            categories=categories,
+            ranks=ranks,
+            township=township,
+            search_type=search_type,
+            bbox=bbox,
+            page=page,
+            size=size,
+        )
+
     # ── 工具 ────────────────────────────────────────────────
     @staticmethod
     def _read_csv(path: Path) -> list[dict]:

@@ -94,11 +94,13 @@ async def relics_facets(
     max_lng: float | None = Query(None),
     max_lat: float | None = Query(None),
 ):
-    """当前筛选下的分面计数 + 总数,供前端 Dashboard/FilterPanel 联动而无需全量入内存。
+    """当前筛选下的分面计数 + 总数 + has_3d,供前端 Dashboard/FilterPanel 联动而无需全量入内存。
 
-    facets 含 category/rank/search_type(按国标全集 0 填充)+ township/era_stats
-    (出现值按计数降序)。仅覆盖主列维度;condition/ownership/industry/risk_factors
-    落在 extra_json,暂不分面。四个 bbox 参数需齐全才生效。
+    facets 含 category/rank/search_type(按国标全集 0 填充)+ township/era_stats/
+    condition/ownership/industry/risk_factors(出现值按计数降序)。后四者来自 extra_json,
+    对**过滤后**子集做一次内存归并;risk_factors 多值逐项计数,industry 取第一段。
+    注:这些维度仅供"计数/展示",过滤 WHERE 只认 category/rank/township/search_type/bbox。
+    四个 bbox 参数需齐全才生效。
     """
     cats = [v.strip() for v in category.split(",")] if category else None
     ranks = [v.strip() for v in rank.split(",")] if rank else None
@@ -113,6 +115,40 @@ async def relics_facets(
         township=(township or "").strip() or None,
         search_type=(search_type or "").strip() or None,
         bbox=bbox,
+    )
+
+
+@router.get("/relics/list")
+async def relics_list(
+    q: str | None = Query(None, description="名称/编号关键词"),
+    category: str | None = Query(None, description="国标大类，逗号分隔多选"),
+    rank: str | None = Query(None, description="保护级别，逗号分隔多选"),
+    township: str | None = Query(None),
+    search_type: str | None = Query(None),
+    min_lng: float | None = Query(None),
+    min_lat: float | None = Query(None),
+    max_lng: float | None = Query(None),
+    max_lat: float | None = Query(None),
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=200),
+):
+    """当前筛选下的分页文物列表(精简行),供前端结果列表;不再依赖全量 /api/relics。
+    每行 {code,name,category(编码),era,township,has_3d}。四个 bbox 参数需齐全才生效。"""
+    cats = [v.strip() for v in category.split(",")] if category else None
+    ranks = [v.strip() for v in rank.split(",")] if rank else None
+    bbox = None
+    if None not in (min_lng, min_lat, max_lng, max_lat):
+        bbox = (min_lng, min_lat, max_lng, max_lat)
+
+    return store.list_relics_filtered(
+        search=(q or "").strip() or None,
+        categories=cats,
+        ranks=ranks,
+        township=(township or "").strip() or None,
+        search_type=(search_type or "").strip() or None,
+        bbox=bbox,
+        page=page,
+        size=size,
     )
 
 
