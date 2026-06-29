@@ -17,10 +17,10 @@ import numpy as np
 
 try:
     import tifffile
-except ImportError as e:  # pragma: no cover
-    raise ImportError(
-        "DEM 地形功能需要 tifffile，请运行 pip install tifffile"
-    ) from e
+except ImportError:  # pragma: no cover
+    # 惰性依赖：仅在真正加载 DEM 时才需要（见 load_dem），后端在 DEM 未启用时
+    # 必须能正常启动，不能因为缺库而整站起不来。
+    tifffile = None
 
 TILE_SIZE = 65
 
@@ -70,6 +70,11 @@ def load_dem(dem_dir: str | Path) -> bool:
     if not files:
         print(f"[DEM] 未在 {dem_dir} 找到任何 .tif 文件")
         return False
+
+    if tifffile is None:
+        raise ImportError(
+            "DEM 地形功能需要 tifffile，请运行 pip install tifffile"
+        )
 
     tiles = []
     for f in files:
