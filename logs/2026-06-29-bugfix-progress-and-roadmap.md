@@ -126,9 +126,14 @@
 
 **P1 — 性能 / 质量**
 - [x] P1-1 写路径增量(GREEN)
-- [⏸] P1-2 前端去全量加载 —— **已暂缓**。调研结论:该 React 应用是"全量入内存 + 客户端交叉筛选"的分析型 UI(Dashboard/FilterPanel 按当前筛选条件实时重算各维分布),`/api/stats` 的全局计数无法替代;真去全量需新建"分面聚合+分页"后端 + 前端重写,属架构级改动且本环境无 Node 无法验证。当前县级体量(几百~数千条)下一次性精简 summary 是合理设计,地图视口优化已由 ViewportManager/by-bbox 承担。**要做须走 §3 的 B 方案(分面后端先行,带测试)。**
+- [◑] P1-2 前端去全量加载 —— **后端已铺路**:新增 `GET /api/relics/facets`(分面聚合+总数,
+  `data_admin_queries.facet_counts`,覆盖主列维度,带测试)。**前端接入仍暂缓**(架构级,
+  需 Node 验证)。详见 §4 调研结论。
 - [x] P1-3 AI 上下文按规模分级注入(GREEN)
 - [x] P1-4 crs.py 回归测试(GREEN)
+
+**测试网补强**
+- [x] 路由端点测试:`test_route_crs.py`、`test_routes_basic.py`(stats/survey/worklog/boundaries)
 
 **P2 — 健壮性 / 运维**
 - [x] P2-a `run_pipeline._select_steps` 数值比较(修 step id ≥ "10" 隐患)+ 测试
