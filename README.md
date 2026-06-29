@@ -2,7 +2,7 @@
 
 一个把四普档案、地图、照片、图纸、工作日志、边界、DEM、三维模型和后台维护流程塞进同一套 WebGIS 里的县区级数字档案平台。
 
-当前版本：`V1.1.0 架构调整版`
+当前版本：`V1.1.5`
 
 > [!WARNING]
 > 这不是一个“clone 下来就自带真实业务数据”的仓库。`data/input/` 不进 Git，`data/output/` 只保留必要目录骨架。你需要把自己的 DOCX、边界、日志、DEM、模型等数据放进去，再跑管线或在后台手动生成。
@@ -145,6 +145,7 @@ data/
 - React + Cesium 主地图。
 - 支持离线/在线底图、行政边界、点位、面域、地形、主视角记忆。
 - 支持 `/api/relics/by-bbox` 视口查询，地图移动后只拉当前区域数据。
+- Dashboard 统计面板，多维交叉筛选联动（类别 / 级别 / 年代 / 现状 / 乡镇等）。
 - 支持瓦片下载、缓存统计、下载历史和离线覆盖显示。
 
 ### 文物档案
@@ -203,6 +204,7 @@ platform/webgis/
 ├─ data_admin_queries.py          # Admin 查询
 ├─ data_admin_stats.py            # Admin 统计
 ├─ survey_coverage.py             # 普查轨迹与村庄覆盖
+├─ web_security.py                # CORS 白名单 + 会话令牌（HMAC-SHA256）
 └─ routers/
    ├─ admin.py
    ├─ admin_task_service.py
@@ -222,6 +224,18 @@ platform/webgis/
 platform/webgis-react/src/        # 面向使用者的主地图
 platform/admin-vue/src/           # 面向维护者的管理后台
 ```
+
+## 实现方式
+
+- **后端**：FastAPI 组合根（`main.py`）+ 中间件（CORS 白名单、HMAC-SHA256 会话令牌）。
+  数据层 `DataStore` 双模式：优先 SQLite（`relics.db`，R-Tree 空间索引 + FTS5 trigram
+  全文 + 审计表 + 乐观锁 + 软删除），无库时回退只读 JSON。视口查询走 R-Tree；另提供
+  `/api/relics/facets`（分面计数）与 `/api/relics/list`（分页）供大数据量时把筛选下推到服务端。
+- **前端**：React 18 + Cesium + Zustand（主图）；Vue 3 + Element Plus + Pinia（后台）。
+  主图点位按视口 `by-bbox` 增量拉取，详情按需懒加载。
+- **数据管线**：`platform/scripts` 下 7 步顺序编排（`run_pipeline.py`）：DOCX→Markdown→
+  数据集→照片 / 图纸→工作日志 PDF→边界→SQLite，坐标统一到 WGS-84。
+- **配置**：`config.yaml`（从 `config.example.yaml` 复制），县区名称 / 视角 / 边界 / 密钥等集中管理。
 
 ## 测试
 
@@ -282,16 +296,14 @@ docs/
 ├─ README.md
 ├─ architecture/v1.1-architecture.md
 ├─ refactor/execution-log.md
-└─ releases/v1.1.0.md
+└─ releases/
+   ├─ v1.1.0.md
+   └─ v1.1.5.md
 ```
 
-## 版本说明
+## 变更记录
 
-V1.1.0 主要是架构调整，不是业务大改。它做了三件事：
-
-1. 把后端入口、瓦片、DEM、后台任务、文物管理、数据查询和统计拆清楚。
-2. 把后台前端的大页面拆出 composable 和独立样式文件。
-3. 把启动、测试、CI、发布文档收拢成稳定流程。
+当前版本 **V1.1.5**。各版本发布说明见 [docs/releases/](docs/releases/)；逐项修改与决策记录在 [logs/](logs/)。
 
 如果你只是想跑起来，记住一条命令就够了：
 
