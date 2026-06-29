@@ -9,6 +9,7 @@ This module now acts as a small composition root:
 from __future__ import annotations
 
 import json
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -348,15 +349,29 @@ def _react_build_exists() -> bool:
     return _WEBGIS_REACT_DIST.exists() and (_WEBGIS_REACT_DIST / "index.html").exists()
 
 
+def _dev_app_url() -> str:
+    """开发模式(start-all 注入 RELICS_DEV_APP_URL)且无 React 构建产物时,
+    返回前端 dev server 根地址;否则返回空串。用于把后端的旧版模板页统一跳到 dev server。"""
+    if _react_build_exists():
+        return ""
+    return os.environ.get("RELICS_DEV_APP_URL", "").strip()
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
     if _react_build_exists():
         return RedirectResponse(url="/app/", status_code=302)
+    dev_url = _dev_app_url()
+    if dev_url:
+        return RedirectResponse(url=dev_url, status_code=302)
     return HTMLResponse(_render_template("index.html"))
 
 
 @app.get("/legacy", response_class=HTMLResponse)
 async def legacy_index():
+    dev_url = _dev_app_url()
+    if dev_url:
+        return RedirectResponse(url=dev_url, status_code=302)
     return _render_template("index.html")
 
 
@@ -366,6 +381,9 @@ async def model_viewer(request: Request):
         qs = request.url.query
         target = "/app/#/model-viewer" + (("?" + qs) if qs else "")
         return RedirectResponse(url=target, status_code=302)
+    dev_url = _dev_app_url()
+    if dev_url:
+        return RedirectResponse(url=dev_url + "#/model-viewer", status_code=302)
     return HTMLResponse(_render_template("model_viewer.html"))
 
 
@@ -375,6 +393,9 @@ async def pdf_viewer(request: Request):
         qs = request.url.query
         target = "/app/#/pdf-viewer" + (("?" + qs) if qs else "")
         return RedirectResponse(url=target, status_code=302)
+    dev_url = _dev_app_url()
+    if dev_url:
+        return RedirectResponse(url=dev_url + "#/pdf-viewer", status_code=302)
     return HTMLResponse(_render_template("pdf_viewer.html"))
 
 
@@ -415,6 +436,9 @@ async def login_page(request: Request):
         else:
             target = "/app/#/login"
         return RedirectResponse(url=target, status_code=302)
+    dev_url = _dev_app_url()
+    if dev_url:
+        return RedirectResponse(url=dev_url + "#/login", status_code=302)
     return HTMLResponse(_render_template("login.html"))
 
 
