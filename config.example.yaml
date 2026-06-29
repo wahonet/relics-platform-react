@@ -120,6 +120,9 @@ api:
     top_k_worklog: 10
     history_turns: 10
     temperature: 0.2
+    # 文物数 <= 此值时,把整张文物清单注入 AI 的 system prompt（便于全量穷举/计数）；
+    # 超过则只注入统计摘要 + 与问题最相关的 Top-K 详情，避免 Token 成本随数据量膨胀。
+    full_context_max_relics: 1500
 
   # Cesium Ion（在线高精度地形、可选）
   cesium_ion:
@@ -131,9 +134,20 @@ server:
   port: 8000
   # 是否启用访问登录（admin 路由），true 时需在下方设置用户
   enable_auth: false
+  # 会话 Cookie 的签名密钥。留空 = 启动时随机生成（进程重启即登出所有人）；
+  # 生产请填一段足够长的随机串，或改用环境变量 RELICS_SECRET_KEY（优先级更高）。
+  secret_key: ""
+  # 会话有效期（秒）。留空 / 0 = 关浏览器即失效的会话级 Cookie。
+  session_max_age_seconds: 0
   users:
     - username: "admin"
       password: "changeme"
+
+# ── 瓦片下载 ─────────────────────────────────────────────────
+tiles:
+  # 批量下载/预缓存前要求的最小剩余磁盘空间（MB）。低于此值会拒绝下载，
+  # 运行中的任务也会在空间不足时自动中止，避免把磁盘写满。
+  min_free_disk_mb: 500
 
 # ── 数据管线参数 ─────────────────────────────────────────────
 # 一般不用改。如需调优各脚本行为在此修改。

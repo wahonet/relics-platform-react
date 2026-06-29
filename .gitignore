@@ -40,3 +40,6 @@ platform/webgis-react/dist/
 Thumbs.db
 .DS_Store
 desktop.ini
+
+# Local throwaway test runner (env-specific: winget-installs Python, etc.)
+_run_tests.sh
