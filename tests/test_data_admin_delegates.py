@@ -74,3 +74,23 @@ def test_admin_stats_overview_uses_legacy_delegate_when_db_disabled():
     assert stats["totals"]["has_3d"] == 1
     assert stats["totals"]["has_photo"] == 1
     assert stats["by_township_top"][0] == {"name": "Town A", "count": 1}
+
+
+def test_facet_counts_legacy_when_db_disabled():
+    store = _store_with_legacy_relics()
+    res = store.facet_counts()
+
+    assert res["total"] == 2
+    cat = {f["code"]: f["count"] for f in res["facets"]["category"]}
+    assert cat["0300"] == 1 and cat["0100"] == 1
+    assert len(res["facets"]["category"]) == 6          # 国标全集 0 填充
+    twn = {f["name"]: f["count"] for f in res["facets"]["township"]}
+    assert twn == {"Town A": 1, "Town B": 1}
+
+
+def test_facet_counts_legacy_respects_filter():
+    store = _store_with_legacy_relics()
+    res = store.facet_counts(categories=["0300"])
+    assert res["total"] == 1
+    cat = {f["code"]: f["count"] for f in res["facets"]["category"]}
+    assert cat["0300"] == 1 and cat["0100"] == 0
