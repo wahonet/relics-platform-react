@@ -38,6 +38,27 @@ SCRIPT_ALIAS: dict[str, str] = {
 
 tasks: dict[str, dict] = {}
 
+# 已结束任务(done/error/skipped 等)在内存中保留的上限;运行中的不计入也不裁剪。
+_MAX_FINISHED_TASKS = 200
+
+
+def _prune_tasks() -> None:
+    """裁剪 tasks 历史:running/starting 全保留,已结束的只留最近 _MAX_FINISHED_TASKS 条。
+
+    仅在事件循环线程(start_script_task)中调用,故对 key 集合的增删不会与异步端点的
+    遍历交错;执行线程(run_script_sync)只更新已存在条目的值,不增删 key。
+    """
+    finished = [
+        (tid, t) for tid, t in tasks.items()
+        if t.get("status") not in ("starting", "running")
+    ]
+    excess = len(finished) - _MAX_FINISHED_TASKS
+    if excess <= 0:
+        return
+    finished.sort(key=lambda kv: kv[1].get("started", ""))
+    for tid, _t in finished[:excess]:
+        tasks.pop(tid, None)
+
 
 def resolve_script(name: str) -> str:
     if name in SCRIPTS:
@@ -116,9 +137,13 @@ def start_script_task(
         "returncode": None,
         **(extra_fields or {}),
     }
+    # 限制历史规模,避免长时间运行后 tasks 无界增长(只裁已结束的,不动运行中的)。
+    _prune_tasks()
+
     script_path = str(SCRIPTS[real])
-    asyncio.get_event_loop().run_in_executor(
-        None, run_script_sync, script_path, task_id, extra_env
-    )
+    # 用 get_running_loop():get_event_loop() 在新版 Python 已废弃;本函数必由
+    # async 路由调用,运行中的事件循环一定存在。
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, run_script_sync, script_path, task_id, extra_env)
     return {"task_id": task_id, "script": real}
 

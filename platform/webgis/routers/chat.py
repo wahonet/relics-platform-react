@@ -29,6 +29,8 @@ router = APIRouter()
 # 运行时状态,init_chat() 中赋值。
 _client = None  # type: ignore[var-annotated]
 _full_context: str = ""
+_stats_summary: str = ""
+_full_listing: str = ""
 _worklog_context: str = ""
 _project_name: str = "本县"
 _project_full_name: str = "不可移动文物数字档案平台"
@@ -38,6 +40,9 @@ _top_k_relics: int = 8
 _top_k_worklog: int = 10
 _history_turns: int = 10
 _temperature: float = 0.2
+# 全量清单注入阈值:文物数 <= 此值才把整张清单塞进 system prompt(默认沿用旧行为,
+# 县级体量基本都在此之下)。超过则只走"统计摘要 + 检索 Top-K",防止 Token 膨胀。
+_full_context_max_relics: int = 1500
 
 
 def _short_level(level: str) -> str:
@@ -108,8 +113,8 @@ def _build_system_prompt() -> str:
 - 不要在同一句话中过度标记，保持可读性"""
 
 
-def _build_full_context() -> str:
-    """拼出全量文物上下文(总体统计 + 按乡镇分组的清单表格),作为 system prompt 复用。"""
+def _build_stats_summary() -> str:
+    """总体统计块(各维度计数)。体积与文物数无关,任何规模都注入。"""
     relics = store.relics
     if not relics:
         return ""
@@ -130,7 +135,7 @@ def _build_full_context() -> str:
     )
 
     title = f"{_project_name}不可移动文物数据库统计"
-    stats = (
+    return (
         f"## {title}\n"
         f"- 文物总数：{len(relics)}处\n"
         f"- 按年代：{', '.join(f'{k}{v}处' for k, v in era_c.most_common())}\n"
@@ -140,6 +145,18 @@ def _build_full_context() -> str:
         f"- 按级别：{', '.join(f'{k}{v}处' for k, v in lvl_c.most_common())}\n"
         f"- 已三维建模：{n3d}处\n"
     )
+
+
+def _build_full_listing() -> str:
+    """按乡镇分组的全量文物清单表格。体积随文物数线性增长,大库时按阈值不注入。"""
+    relics = store.relics
+    if not relics:
+        return ""
+
+    twn_groups: dict[str, list] = {}
+    for r in relics:
+        twn = re.sub(r"^\d+", "", r.get("township", "未知"))
+        twn_groups.setdefault(twn, []).append(r)
 
     header = "编号|名称|年代|大类|子类|级别|现状|三维|面积"
     sections = []
@@ -162,7 +179,47 @@ def _build_full_context() -> str:
             ]))
         sections.append("\n".join(lines))
 
-    return stats + "\n## 完整文物清单（按乡镇分组）\n" + "\n".join(sections)
+    return "## 完整文物清单（按乡镇分组）\n" + "\n".join(sections)
+
+
+def _build_full_context() -> str:
+    """统计 + 全量清单(向后兼容:/chat/test 仍报告其字符数)。"""
+    stats = _build_stats_summary()
+    if not stats:
+        return ""
+    return stats + "\n" + _build_full_listing()
+
+
+def assemble_system_content(
+    base_prompt: str,
+    stats_summary: str,
+    full_listing: str,
+    worklog_context: str,
+    relic_detail: str,
+    worklog_detail: str,
+    *,
+    relic_count: int,
+    max_relics: int,
+) -> str:
+    """组装发给模型的 system prompt(纯函数,便于单测)。
+
+    - 统计摘要 / 命中的 Top-K 文物详情 / 工作日志:始终注入。
+    - 全量清单:仅当 relic_count <= max_relics 时注入。小库(县级常见)沿用旧行为,
+      让模型能做全量穷举/计数;大库则改走"统计摘要 + 检索 Top-K",避免 system
+      prompt 体积与 Token 成本随数据量线性膨胀。
+    """
+    parts = [base_prompt]
+    if stats_summary:
+        parts.append(stats_summary)
+    if full_listing and relic_count <= max_relics:
+        parts.append(full_listing)
+    if worklog_context:
+        parts.append(worklog_context)
+    if relic_detail:
+        parts.append("## 与本次提问最相关的文物详情\n" + relic_detail)
+    if worklog_detail:
+        parts.append(worklog_detail)
+    return "\n\n".join(parts)
 
 
 def _build_worklog_context() -> str:
@@ -327,10 +384,11 @@ def _find_relevant_intros(query: str, top_k: int = 8) -> str:
 def init_chat() -> None:
     """在 lifespan 中调用:读配置、建客户端、预烘上下文。
     API Key 缺失或仍为 ${VAR} 占位时 _client=None,/chat 返回友好提示。"""
-    global _client, _full_context, _worklog_context
+    global _client, _full_context, _stats_summary, _full_listing, _worklog_context
     global _project_name, _project_full_name
     global _default_model, _available_models
     global _top_k_relics, _top_k_worklog, _history_turns, _temperature
+    global _full_context_max_relics
 
     cfg = load_config()
     proj = cfg.get("project", {})
@@ -346,6 +404,7 @@ def init_chat() -> None:
     _top_k_worklog = int(sf.get("top_k_worklog", 10))
     _history_turns = int(sf.get("history_turns", 10))
     _temperature = float(sf.get("temperature", 0.2))
+    _full_context_max_relics = int(sf.get("full_context_max_relics", 1500))
 
     invalid = (not api_key) or (api_key.startswith("${") and api_key.endswith("}"))
     if invalid:
@@ -360,10 +419,14 @@ def init_chat() -> None:
             _client = None
 
     _full_context = _build_full_context()
+    _stats_summary = _build_stats_summary()
+    _full_listing = _build_full_listing()
     if _full_context:
         ctx_len = len(_full_context)
-        print(f"[AI] 全量上下文 {ctx_len} 字 ≈ {ctx_len // 2} tokens "
-              f"({len(store.relics)} 条文物)")
+        n = len(store.relics)
+        mode = "全量清单" if n <= _full_context_max_relics else f"仅统计摘要(>{_full_context_max_relics} 阈值)"
+        print(f"[AI] 文物上下文 {ctx_len} 字 ≈ {ctx_len // 2} tokens "
+              f"({n} 条文物,模式:{mode})")
 
     _worklog_context = _build_worklog_context()
     if _worklog_context:
@@ -387,13 +450,16 @@ async def chat(req: ChatRequest):
     detail = _find_relevant_intros(req.message, top_k=_top_k_relics)
     wl_detail = _find_relevant_worklog(req.message)
 
-    system_content = _build_system_prompt() + "\n\n" + _full_context
-    if _worklog_context:
-        system_content += "\n\n" + _worklog_context
-    if detail:
-        system_content += "\n\n## 与本次提问最相关的文物详情\n" + detail
-    if wl_detail:
-        system_content += "\n\n" + wl_detail
+    system_content = assemble_system_content(
+        _build_system_prompt(),
+        _stats_summary,
+        _full_listing,
+        _worklog_context,
+        detail,
+        wl_detail,
+        relic_count=len(store.relics),
+        max_relics=_full_context_max_relics,
+    )
 
     use_model = req.model or _default_model
 

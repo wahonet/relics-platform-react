@@ -32,6 +32,12 @@ from routers import admin, boundaries as _boundaries, chat, crs as _crs, relics,
 from terrain_provider import load_dem  # noqa: E402
 from terrain_routes import register_terrain_routes  # noqa: E402
 from tile_routes import TILE_CACHE_DIR, register_tile_routes  # noqa: E402
+from web_security import (  # noqa: E402
+    resolve_cors_origins,
+    resolve_session_secret,
+    sign_session,
+    verify_session,
+)
 
 _CONFIG: dict = {}
 _FEATURES: dict = {}
@@ -142,7 +148,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         if any(path == p or path.startswith(p) for p in _PUBLIC_PREFIXES):
             return await call_next(request)
-        if request.cookies.get("session") != "authenticated":
+        if not verify_session(request.cookies.get("session"), _SECRET, max_age=_SESSION_MAX_AGE):
             from urllib.parse import quote
 
             target = path
@@ -154,9 +160,31 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(AuthMiddleware)
+# 中间件在模块导入期注册(此时 lifespan 尚未跑、_CONFIG 还是空),所以这里
+# 单独读一次 config 供 CORS 白名单与会话密钥使用;缺 config.yaml(如单测)
+# 时回退到安全默认值。
+try:
+    _BOOT_CFG = load_config()
+except Exception:
+    _BOOT_CFG = {}
+
+# CORS:不能用 allow_origins=["*"] 搭配 allow_credentials=True —— 违反规范,
+# 浏览器会拒绝携带 Cookie 的跨域请求。改为按 config 解析出具体白名单。
+_CORS_ORIGINS = resolve_cors_origins(_BOOT_CFG)
+
+# 会话签名密钥 + 可选有效期(供 AuthMiddleware 校验、/api/login 签发)。
+_SECRET, _SECRET_SOURCE = resolve_session_secret(_BOOT_CFG)
+_sm = (_BOOT_CFG.get("server") or {}).get("session_max_age_seconds")
+try:
+    _SESSION_MAX_AGE = int(_sm) if _sm not in (None, "", 0, "0") else None
+except (TypeError, ValueError):
+    _SESSION_MAX_AGE = None
+if _SECRET_SOURCE == "ephemeral":
+    print("[auth] 未配置 server.secret_key / 环境变量 RELICS_SECRET_KEY，"
+          "本次使用进程内随机会话密钥(重启后需重新登录)。生产请配置固定密钥。")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -414,13 +442,15 @@ def _auth_enabled() -> bool:
 
 
 def _login_response(username: str = "admin") -> JSONResponse:
-    resp = JSONResponse({"ok": True, "username": username or "admin"})
+    uname = username or "admin"
+    resp = JSONResponse({"ok": True, "username": uname})
     resp.set_cookie(
         key="session",
-        value="authenticated",
+        value=sign_session(uname, _SECRET),   # 签名令牌,替代可伪造的固定值
         httponly=True,
         samesite="lax",
         path="/",
+        max_age=_SESSION_MAX_AGE,             # None → 会话级 Cookie(关浏览器即失效)
     )
     return resp
 
