@@ -49,3 +49,15 @@ def test_login_checks_configured_users_when_auth_enabled(monkeypatch):
 def test_forged_static_cookie_is_rejected():
     # 旧的 "authenticated" 值在新机制下必须无效(签名校验失败)。
     assert verify_session("authenticated", main._SECRET) is None
+
+
+def test_login_cookie_secure_flag_follows_config(monkeypatch):
+    monkeypatch.setattr(main, "_CONFIG", {"server": {"enable_auth": False}})
+
+    monkeypatch.setattr(main, "_COOKIE_SECURE", False)
+    resp = asyncio.run(main.api_login(main._LoginBody(username="u", password="x")))
+    assert "secure" not in resp.headers["set-cookie"].lower()
+
+    monkeypatch.setattr(main, "_COOKIE_SECURE", True)
+    resp2 = asyncio.run(main.api_login(main._LoginBody(username="u", password="x")))
+    assert "secure" in resp2.headers["set-cookie"].lower()

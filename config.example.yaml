@@ -139,6 +139,9 @@ server:
   secret_key: ""
   # 会话有效期（秒）。留空 / 0 = 关浏览器即失效的会话级 Cookie。
   session_max_age_seconds: 0
+  # 会话 Cookie 是否带 Secure 标志（仅经 HTTPS 传输）。默认 false（demo/内网走 http，
+  # 强开会导致 Cookie 发不出去、登录失败）。上 HTTPS 生产环境时改 true。
+  cookie_secure: false
   users:
     - username: "admin"
       password: "changeme"
