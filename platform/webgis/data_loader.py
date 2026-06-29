@@ -1074,6 +1074,26 @@ class DataStore:
     def admin_list_townships(self) -> list[str]:
         return data_admin_queries.admin_list_townships(self)
 
+    def facet_counts(
+        self,
+        *,
+        search: Optional[str] = None,
+        categories: Optional[Iterable[str]] = None,
+        ranks: Optional[Iterable[str]] = None,
+        township: Optional[str] = None,
+        search_type: Optional[str] = None,
+        bbox: Optional[tuple] = None,
+    ) -> dict:
+        return data_admin_queries.facet_counts(
+            self,
+            search=search,
+            categories=categories,
+            ranks=ranks,
+            township=township,
+            search_type=search_type,
+            bbox=bbox,
+        )
+
     # ── 工具 ────────────────────────────────────────────────
     @staticmethod
     def _read_csv(path: Path) -> list[dict]:

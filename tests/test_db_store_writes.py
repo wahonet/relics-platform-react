@@ -215,3 +215,44 @@ def test_bulk_update_avoids_full_reload(store, monkeypatch):
     for c in ("A001", "A002", "A003"):
         assert store.relics_map[c]["township"] == "统一镇"
 
+
+# ── B:分面聚合(facet_counts)──────────────────────────────────
+def test_facets_basic(store):
+    res = store.facet_counts()
+    assert res["total"] == 3
+
+    cat = {f["code"]: f["count"] for f in res["facets"]["category"]}
+    assert cat == {"0100": 1, "0200": 0, "0300": 1, "0400": 1, "0500": 0, "0600": 0}
+    # 国标全集均在,顺序固定。
+    assert [f["code"] for f in res["facets"]["category"]] == \
+        ["0100", "0200", "0300", "0400", "0500", "0600"]
+
+    rank = {f["code"]: f["count"] for f in res["facets"]["rank"]}
+    assert rank["5"] == 3 and sum(rank.values()) == 3
+    st = {f["code"]: f["count"] for f in res["facets"]["search_type"]}
+    assert st["2"] == 3
+
+
+def test_facets_respect_category_filter(store):
+    res = store.facet_counts(categories=["0300"])
+    assert res["total"] == 1
+    cat = {f["code"]: f["count"] for f in res["facets"]["category"]}
+    assert cat["0300"] == 1 and cat["0100"] == 0
+
+
+def test_facets_respect_search(store):
+    res = store.facet_counts(search="甲村")   # 仅 A001 名为 甲村古桥梁
+    assert res["total"] == 1
+
+
+def test_facets_township_grouping_after_edit(store):
+    store.update_relic("A001", {"township": "城关镇", "era_stats": "明"},
+                       expected_version=1, actor="t")
+    store.update_relic("A002", {"township": "城关镇"}, expected_version=1, actor="t")
+    res = store.facet_counts()
+    twn = {f["name"]: f["count"] for f in res["facets"]["township"]}
+    assert twn.get("城关镇") == 2                       # 出现值才返回
+    assert all("name" in f and "count" in f for f in res["facets"]["township"])
+    era = {f["name"]: f["count"] for f in res["facets"]["era_stats"]}
+    assert era.get("明") == 1
+

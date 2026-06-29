@@ -82,6 +82,40 @@ async def relics_search(
     return {"data": data, "total": len(data), "query": q}
 
 
+@router.get("/relics/facets")
+async def relics_facets(
+    q: str | None = Query(None, description="名称/编号关键词"),
+    category: str | None = Query(None, description="国标大类 0100..0600，逗号分隔多选"),
+    rank: str | None = Query(None, description="保护级别 1..5，逗号分隔多选"),
+    township: str | None = Query(None),
+    search_type: str | None = Query(None),
+    min_lng: float | None = Query(None),
+    min_lat: float | None = Query(None),
+    max_lng: float | None = Query(None),
+    max_lat: float | None = Query(None),
+):
+    """当前筛选下的分面计数 + 总数,供前端 Dashboard/FilterPanel 联动而无需全量入内存。
+
+    facets 含 category/rank/search_type(按国标全集 0 填充)+ township/era_stats
+    (出现值按计数降序)。仅覆盖主列维度;condition/ownership/industry/risk_factors
+    落在 extra_json,暂不分面。四个 bbox 参数需齐全才生效。
+    """
+    cats = [v.strip() for v in category.split(",")] if category else None
+    ranks = [v.strip() for v in rank.split(",")] if rank else None
+    bbox = None
+    if None not in (min_lng, min_lat, max_lng, max_lat):
+        bbox = (min_lng, min_lat, max_lng, max_lat)
+
+    return store.facet_counts(
+        search=(q or "").strip() or None,
+        categories=cats,
+        ranks=ranks,
+        township=(township or "").strip() or None,
+        search_type=(search_type or "").strip() or None,
+        bbox=bbox,
+    )
+
+
 # ── 兼容旧接口 ──────────────────────────────────────────────
 @router.get("/relics", deprecated=True)
 async def list_relics():

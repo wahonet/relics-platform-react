@@ -362,3 +362,158 @@ def admin_list_townships(self) -> list[str]:
         "SELECT DISTINCT township FROM relics WHERE township IS NOT NULL AND township <> '' ORDER BY township"
     ).fetchall()
     return [r["township"] for r in rows]
+
+
+def facet_counts(
+    self,
+    *,
+    search: Optional[str] = None,
+    categories: Optional[Iterable[str]] = None,
+    ranks: Optional[Iterable[str]] = None,
+    township: Optional[str] = None,
+    search_type: Optional[str] = None,
+    bbox: Optional[tuple] = None,
+) -> dict:
+    """当前筛选下的分面计数 + 总数,供前端 Dashboard/FilterPanel 不全量入内存即可联动。
+
+    返回 {total, facets:{category[], rank[], search_type[], township[], era_stats[]}}。
+    - category/rank/search_type:按国标编码全集 0 填充(顺序固定,便于前端直接渲染)。
+    - township/era_stats:仅返回出现过的值,按计数降序。
+    - 仅统计 status=1(在册)记录;口径与公开地图一致。
+
+    只覆盖**主列**维度;condition_level/ownership_type/industry/risk_factors 落在
+    extra_json,需 json_extract 且无索引,暂不在此分面(见 relics 路由说明)。
+    """
+    from codes import CATEGORY_CODES, RANK_CODES, SEARCH_TYPE_CODES
+
+    if not self._use_db:
+        return _facet_counts_legacy(
+            self, search=search, categories=categories, ranks=ranks,
+            township=township, search_type=search_type,
+        )
+
+    where = ["r.status = 1"]
+    params: list = []
+    if search:
+        where.append("(r.code LIKE ? OR r.name LIKE ?)")
+        params.extend([f"%{search}%", f"%{search}%"])
+    if categories:
+        cl = [str(v) for v in categories if v not in (None, "")]
+        if cl:
+            where.append(f"r.category IN ({','.join('?' for _ in cl)})")
+            params.extend(cl)
+    if ranks:
+        rl = [str(v) for v in ranks if v not in (None, "")]
+        if rl:
+            where.append(f"r.rank IN ({','.join('?' for _ in rl)})")
+            params.extend(rl)
+    if township:
+        where.append("r.township = ?")
+        params.append(township)
+    if search_type:
+        where.append("r.search_type = ?")
+        params.append(str(search_type))
+    if bbox:
+        try:
+            mnl, mnt, mxl, mxt = [float(v) for v in bbox]
+            if mnl > mxl: mnl, mxl = mxl, mnl
+            if mnt > mxt: mnt, mxt = mxt, mnt
+            where.append(
+                "r.lng IS NOT NULL AND r.lat IS NOT NULL "
+                "AND r.lng BETWEEN ? AND ? AND r.lat BETWEEN ? AND ?"
+            )
+            params.extend([mnl, mxl, mnt, mxt])
+        except (TypeError, ValueError):
+            pass
+
+    where_sql = " WHERE " + " AND ".join(where)
+    conn = self._thread_conn()
+
+    total_row = conn.execute(
+        f"SELECT COUNT(*) AS n FROM relics AS r{where_sql}", params
+    ).fetchone()
+    total = int(total_row["n"]) if total_row else 0
+
+    def _group(col: str) -> dict:
+        rows = conn.execute(
+            f"SELECT r.{col} AS k, COUNT(*) AS n FROM relics AS r{where_sql} GROUP BY r.{col}",
+            params,
+        ).fetchall()
+        return {str(r["k"] if r["k"] is not None else ""): int(r["n"]) for r in rows}
+
+    cat_c = _group("category")
+    rank_c = _group("rank")
+    st_c = _group("search_type")
+    twn_c = _group("township")
+    era_c = _group("era_stats")
+
+    return {
+        "total": total,
+        "facets": {
+            "category": [{"code": c, "count": cat_c.get(c, 0)} for c in CATEGORY_CODES],
+            "rank": [{"code": c, "count": rank_c.get(c, 0)} for c in RANK_CODES],
+            "search_type": [{"code": c, "count": st_c.get(c, 0)} for c in SEARCH_TYPE_CODES],
+            "township": _sorted_named(twn_c),
+            "era_stats": _sorted_named(era_c),
+        },
+    }
+
+
+def _sorted_named(counts: dict) -> list[dict]:
+    """{name:count} → [{name,count}],按计数降序、同数按名字升序;剔除空名。"""
+    items = [(k, v) for k, v in counts.items() if k]
+    items.sort(key=lambda kv: (-kv[1], kv[0]))
+    return [{"name": k, "count": v} for k, v in items]
+
+
+def _facet_counts_legacy(
+    self, *, search, categories, ranks, township, search_type,
+) -> dict:
+    """JSON 模式:内存遍历 + normalize_* 归一后计数(仅小规模 demo)。"""
+    from codes import (
+        CATEGORY_CODES, RANK_CODES, SEARCH_TYPE_CODES,
+        normalize_category, normalize_rank, normalize_search_type,
+    )
+    cat_set = {str(v) for v in categories} if categories else None
+    rank_set = {str(v) for v in ranks} if ranks else None
+    s = (search or "").strip()
+
+    total = 0
+    cat_c: dict = {}; rank_c: dict = {}; st_c: dict = {}; twn_c: dict = {}; era_c: dict = {}
+    for r in self.relics:
+        code = (r.get("archive_code") or "").strip()
+        name = (r.get("name") or "").strip()
+        if s and s not in code and s not in name:
+            continue
+        c = normalize_category(r.get("category_main"))
+        rk = normalize_rank(r.get("heritage_level"))
+        st = normalize_search_type(r.get("survey_type"))
+        if cat_set and c not in cat_set:
+            continue
+        if rank_set and rk not in rank_set:
+            continue
+        if township and (r.get("township") or "") != township:
+            continue
+        if search_type and st != str(search_type):
+            continue
+        total += 1
+        cat_c[c] = cat_c.get(c, 0) + 1
+        rank_c[rk] = rank_c.get(rk, 0) + 1
+        st_c[st] = st_c.get(st, 0) + 1
+        twn = (r.get("township") or "").strip()
+        if twn:
+            twn_c[twn] = twn_c.get(twn, 0) + 1
+        era = (r.get("era_stats") or "").strip()
+        if era:
+            era_c[era] = era_c.get(era, 0) + 1
+
+    return {
+        "total": total,
+        "facets": {
+            "category": [{"code": c, "count": cat_c.get(c, 0)} for c in CATEGORY_CODES],
+            "rank": [{"code": c, "count": rank_c.get(c, 0)} for c in RANK_CODES],
+            "search_type": [{"code": c, "count": st_c.get(c, 0)} for c in SEARCH_TYPE_CODES],
+            "township": _sorted_named(twn_c),
+            "era_stats": _sorted_named(era_c),
+        },
+    }
