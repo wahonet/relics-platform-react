@@ -111,10 +111,27 @@ def ensure_data_dirs(python: str) -> None:
     subprocess.run([python, "-c", code], cwd=str(ROOT), capture_output=True)
 
 
+def _vite_bin(d: Path) -> Path:
+    """当前平台 vite 的真正入口路径。
+
+    Windows 上 npm scripts 由 cmd 调用,找的是 .bin/vite.cmd;Linux/麒麟 找的是
+    .bin/vite。只检查 node_modules/vite(包目录)查不出跨平台污染 —— 在 WSL 装出的
+    node_modules 在 Windows 上会缺 .cmd,启动时报 "'vite' is not recognized"。
+    """
+    bin_dir = d / "node_modules" / ".bin"
+    return bin_dir / "vite.cmd" if os.name == "nt" else bin_dir / "vite"
+
+
 def ensure_npm_deps(npm: str) -> None:
     for d in (VUE_DIR, REACT_DIR):
-        if (d / "node_modules" / "vite").exists():
+        if _vite_bin(d).exists():
             continue
+        # 包目录在但本平台 bin 缺失 → 跨平台污染(如 WSL 装的 node_modules 在 Windows
+        # 没有 .cmd)。npm install 认为依赖已满足、不会重建 bin,必须先清掉重装。
+        nm = d / "node_modules"
+        if (nm / "vite").exists():
+            _info(f"[setup] {d.name} 的 node_modules 非本平台产物,清理后重装...")
+            shutil.rmtree(nm, ignore_errors=True)
         _info(f"[setup] 安装 {d.name} 前端依赖(npm install,首次较慢)...")
         subprocess.run([npm, "install"], cwd=str(d))
 
