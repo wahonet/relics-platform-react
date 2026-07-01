@@ -551,3 +551,13 @@ Linux / 麒麟：
 ```text
 http://127.0.0.1:5174/
 ```
+
+---
+
+## 开源协议
+
+本项目基于 [木兰宽松许可证，第 2 版（Mulan PSL v2）](http://license.coscl.org.cn/MulanPSL2) 开源。
+
+Copyright (c) 2026 Ben Margatroid & 嘉祥县文物保护中心
+
+在保留本许可证副本与版权声明的前提下，你可自由使用、复制、修改和分发本软件。完整条款见根目录 [LICENSE](LICENSE)。
