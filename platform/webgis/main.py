@@ -141,10 +141,22 @@ _PUBLIC_PREFIXES = (
     "/legacy",
 )
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def _demo_mode_allows_client(client_host: str, allow_insecure: bool) -> bool:
+    """鉴权关闭(demo 模式)时,只允许本机回环访问,除非显式 allow_insecure_demo。"""
+    return client_host in _LOOPBACK_HOSTS or allow_insecure
+
 
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        if not (_CONFIG.get("server") or {}).get("enable_auth", False):
+        server = _CONFIG.get("server") or {}
+        if not server.get("enable_auth", False):
+            # demo 模式:仅允许本机回环,防止"误绑 0.0.0.0 + 关 auth"暴露全部写接口。
+            client = (request.client.host if request.client else "") or ""
+            if not _demo_mode_allows_client(client, bool(server.get("allow_insecure_demo", False))):
+                return JSONResponse({"detail": "未启用鉴权,仅允许本机访问"}, status_code=403)
             return await call_next(request)
         path = request.url.path
         if any(path == p or path.startswith(p) for p in _PUBLIC_PREFIXES):
