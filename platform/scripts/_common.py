@@ -141,12 +141,22 @@ def _gcj_delta(lng: float, lat: float) -> tuple[float, float]:
     return d_lng, d_lat
 
 
+def _in_china(lng: float, lat: float) -> bool:
+    """是否在中国境内。与前端 crs.ts 的 inChina 完全一致:
+    境外坐标不做 GCJ-02 偏移(否则前后端在边界/测试点上漂移)。"""
+    return 72.004 <= lng <= 137.8347 and 0.8293 <= lat <= 55.8271
+
+
 def gcj02_to_wgs84(lng: float, lat: float) -> tuple[float, float]:
+    if not _in_china(lng, lat):
+        return round(lng, 8), round(lat, 8)
     d_lng, d_lat = _gcj_delta(lng, lat)
     return round(lng - d_lng, 8), round(lat - d_lat, 8)
 
 
 def wgs84_to_gcj02(lng: float, lat: float) -> tuple[float, float]:
+    if not _in_china(lng, lat):
+        return round(lng, 8), round(lat, 8)
     d_lng, d_lat = _gcj_delta(lng, lat)
     return round(lng + d_lng, 8), round(lat + d_lat, 8)
 

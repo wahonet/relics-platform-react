@@ -134,12 +134,15 @@ _EP2 = (_A ** 2 - _B ** 2) / _B ** 2
 # ── 高斯-克吕格 ───────────────────────────────────────────────
 def gk_zone_for_lng(lng: float, zone_width: int = 3) -> int:
     """根据经度自动判断 GK 带号。
-    zone_width=3: 带号 = round(lng/3), 中央经线 = 带号*3
-    zone_width=6: 带号 = int((lng+6)/6) ≈ int(lng/6)+1, 中央经线 = 带号*6 - 3
+    zone_width=3: 带号 = round-half-up(lng/3), 中央经线 = 带号*3
+    zone_width=6: 带号 = int(lng/6)+1, 中央经线 = 带号*6 - 3
+
+    注意:3° 带必须用“半数向上”而非 Python 内置 round(银行家舍入),否则在
+    .5 边界(如 lng=115.5)上会与前端 crs.ts 的 Math.round 差一个带号。
     """
     if zone_width == 6:
         return int(lng / 6) + 1
-    return int(round(lng / 3))
+    return int(math.floor(lng / 3 + 0.5))
 
 
 def gk_central_meridian(zone: int, zone_width: int = 3) -> float:
