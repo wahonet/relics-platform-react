@@ -1,98 +1,216 @@
-# 不可移动文物数字档案平台
+# 不可移动文物数字档案 WebGIS 平台
 
-一个把四普档案、地图、照片、图纸、工作日志、边界、DEM、三维模型和后台维护流程塞进同一套 WebGIS 里的县区级数字档案平台。
+> 面向县区级文博单位的不可移动文物数字档案管理平台。
+> 它把四普档案、空间地图、照片图纸、工作日志、行政边界、DEM 地形、三维模型和后台维护流程放在同一套系统里，尽量让“资料整理、地图展示、档案维护、统计分析、离线交付”都能在一个平台里完成。
 
 当前版本：`V1.1.5`
 
-> [!WARNING]
-> 这不是一个“clone 下来就自带真实业务数据”的仓库。`data/input/` 不进 Git，`data/output/` 只保留必要目录骨架。你需要把自己的 DOCX、边界、日志、DEM、模型等数据放进去，再跑管线或在后台手动生成。
+---
 
-> [!IMPORTANT]
-> 日常只需要一个入口：`start-all.bat`（Windows 双击或终端运行）或 `./start-all.sh`（Linux/麒麟），一键起后端 + 两个前端，日志合流在同一控制台，Ctrl+C 一次性全停。旧的编号 BAT、以及单独的 `start-backend.bat` / `start-frontend.bat` 都已合并到这里（别再找 `1-setup.bat`、`2-pipeline.bat` 那套）。
+## 项目简介
 
-> [!CAUTION]
-> 模板配置默认 `server.enable_auth: false`，后台登录接口会直接签发本地 session。要上生产或给别人访问，请改成 `true`，并把 `server.users` 里的默认密码换掉。
+很多县区级文物档案并不是“缺系统”，而是资料分散在不同地方：DOCX 档案、Excel 工作日志、照片文件夹、图纸扫描件、行政边界、三维模型、地图点位，各自都有一套存放方式。日常查询、核对、更新和汇报时，需要在多个文件和软件之间来回切换。
 
-完整架构树在 [docs/architecture/v1.1-architecture.md](docs/architecture/v1.1-architecture.md)，重构执行记录在 [docs/refactor/execution-log.md](docs/refactor/execution-log.md)。
+这个平台的目标很直接：把这些资料整理成一套可以长期维护的数字档案库，并通过 WebGIS 的方式展示出来。
+
+平台主要做三件事：
+
+1. **把档案数据整理出来**
+   通过 7 步数据管线，把 DOCX、照片、图纸、工作日志、行政边界等资料整理成结构化数据和 SQLite 数据库。
+
+2. **把文物放到地图上管理**
+   在 Cesium 地图中展示文物点位、范围、行政边界、地形、离线瓦片、三维模型，并支持按当前视口加载数据。
+
+3. **把后续维护留在后台**
+   管理后台支持文物编辑、批量操作、导入导出、审计日志、回收站和管线任务，不需要每次都回到原始文件里手工改。
+
+---
+
+## 适用场景
+
+这个项目主要面向以下场景：
+
+* 县区级不可移动文物档案数字化整理。
+* 四普、三普、日常巡查、复核数据的汇总展示。
+* 文物点位、行政边界、保护范围、照片图纸的统一管理。
+* 内网或局域网部署，给文博单位、乡镇、外业人员使用。
+* 数字大赛、项目汇报、演示展示和后续真实交付。
+
+它不是一个单纯的地图 Demo，也不是只展示静态页面的作品。它更接近一套从数据整理到业务展示再到后台维护的完整 WebGIS 应用。
+
+---
+
+## 核心功能
+
+### 1. WebGIS 主图
+
+* 使用 React + Cesium 构建主地图。
+* 支持在线 / 离线底图切换。
+* 支持行政边界、文物点位、面域、地形和三维模型展示。
+* 地图移动后只加载当前视口内的数据，适合较大数据量。
+* 支持按类别、级别、年代、现状、乡镇等条件联动筛选。
+* 支持瓦片下载、缓存统计和离线覆盖查看。
+
+### 2. 文物档案详情
+
+每处文物可以查看：
+
+* 基本信息：名称、编号、类别、级别、年代、地址、乡镇等。
+* 空间信息：经纬度、面域、周边文物、地图定位。
+* 影像资料：照片、图纸、PDF。
+* 三维资料：3D Tiles / 三维模型。
+* 工作日志：外业记录、日期联动、日志 PDF。
+* 简介和备注：用于快速了解文物情况。
+
+### 3. 数据管线
+
+平台内置 7 步数据处理流程：
+
+| Step | 内容                | 主要产物                 |
+| ---- | ----------------- | -------------------- |
+| 01   | DOCX 档案转 Markdown | 结构化 Markdown         |
+| 02   | Markdown 转数据集     | CSV / JSON / GeoJSON |
+| 03   | 提取档案照片            | 照片文件和索引              |
+| 04   | 提取档案图纸            | 图纸文件和索引              |
+| 05   | 工作日志转 PDF         | 日志 PDF               |
+| 06   | 行政边界处理            | WGS-84 GeoJSON       |
+| 07   | 构建 SQLite 数据库     | `relics.db`          |
+
+管线可以在命令行运行，也可以在 Vue 管理后台的“管线工作台”里手动触发。
+
+### 4. 管理后台
+
+后台使用 Vue 3 + Element Plus 构建，主要用于日常维护：
+
+* Dashboard 总览。
+* 文物列表、分页、搜索和筛选。
+* 新增、编辑、软删除、恢复文物。
+* 批量编辑、导入、导出。
+* 审计日志和版本记录。
+* 管线任务启动、日志查看和执行状态查看。
+* 回收站、相邻文物查询、地图拾点回传。
+
+### 5. 空间检索和全文检索
+
+后端优先使用 SQLite：
+
+* R-Tree：用于空间范围查询。
+* FTS5：用于全文搜索。
+* audit_log：记录后台写操作。
+* version 字段：降低多人编辑时互相覆盖的风险。
+* 软删除：避免误删后无法恢复。
+
+如果没有 SQLite 数据库，系统可以回退到 JSON 只读数据，方便早期演示和调试。
+
+### 6. 离线与内网交付
+
+项目设计时考虑了县区级文博单位常见的内网环境：
+
+* 支持 Windows 开发环境。
+* 支持 Linux / 麒麟系统部署。
+* 支持本地瓦片缓存。
+* 支持本地 DEM 地形服务。
+* 支持本地静态资源挂载。
+* 支持将数据和产物放在 `data/` 目录下统一管理。
+
+---
 
 ## 快速开始
 
-### 准备配置
+### 环境要求
 
-第一次启动时，脚本会自动把 `config.example.yaml` 复制成 `config.yaml`：
+建议环境：
 
-```powershell
-.\start-all.bat
-```
+* Python 3.10+
+* Node.js 18+
+* npm
+* Windows 10/11 或 Linux/麒麟
 
-你也可以手动复制：
+首次运行时，启动脚本会自动做几件事：
 
-```powershell
-Copy-Item config.example.yaml config.yaml
-```
+* 复制 `config.example.yaml` 为 `config.yaml`。
+* 安装后端 Python 依赖。
+* 安装两个前端的 npm 依赖。
+* 创建 `data/` 目录骨架。
+* 同时启动后端、React 主图和 Vue 后台。
 
-建议至少看一眼这些字段：
+### Windows 启动
 
-| 配置 | 说明 |
-|---|---|
-| `project.name` / `project.full_name` | 平台名称、页面标题 |
-| `geo.center` / `geo.bounds` | 初始视角、瓦片下载范围、DEM 裁剪范围 |
-| `geo.boundaries.*` | 行政边界投影参数 |
-| `administrative.county_name` / `townships` | 县区名称、乡镇列表 |
-| `api.*` / 环境变量 | AI、地图源、Cesium 等外部服务密钥 |
-| `server.enable_auth` / `server.users` | 登录保护开关与后台账号 |
-
-模板默认后台账号是：
-
-```text
-admin / changeme
-```
-
-如果 `enable_auth: false`，随便填也能进后台；如果改成 `true`，就必须匹配 `server.users`。
-
-### 启动
-
-Windows 双击或在终端运行：
+在项目根目录运行：
 
 ```powershell
 .\start-all.bat
 ```
 
-Linux / 麒麟：
+也可以直接双击 `start-all.bat`。
+
+### Linux / 麒麟启动
+
+第一次需要给脚本执行权限：
+
+```bash
+chmod +x start-all.sh
+```
+
+然后运行：
 
 ```bash
 ./start-all.sh
 ```
 
-它会一次性起好三个服务，日志合流在同一控制台（Ctrl+C 一次性全停），并在 React 主应用就绪后自动打开浏览器：
+### 启动后访问
 
-| 应用 | 地址 | 说明 |
-|---|---|---|
-| React WebGIS | `http://127.0.0.1:5174/` | 主地图、三维、统计、详情、AI、瓦片下载 |
-| Vue Admin | `http://127.0.0.1:5173/` | 管理后台、管线、CRUD、审计、导入导出 |
-| FastAPI 后端 | `http://127.0.0.1:8000/` | API、瓦片代理、静态挂载（含 `/app/` 和 `/admin-ui/`） |
+| 应用              | 地址                       | 说明                   |
+| --------------- | ------------------------ | -------------------- |
+| React WebGIS 主图 | `http://127.0.0.1:5174/` | 地图、详情、统计、三维、AI、瓦片下载  |
+| Vue 管理后台        | `http://127.0.0.1:5173/` | 数据维护、管线、CRUD、审计、导入导出 |
+| FastAPI 后端      | `http://127.0.0.1:8000/` | API、瓦片代理、静态资源挂载      |
 
-脚本会优先使用 `.venv`，其次使用仓库内的 `python/`，最后才找系统 Python；首次运行还会自动安装后端 `platform/webgis/requirements.txt` 与两个前端的 npm 依赖。
+开发时通常看：
 
-端口关系别绕晕：
+* 改主地图：打开 `5174`
+* 改后台：打开 `5173`
+* 看集成后的后端挂载页面：打开 `8000/app/` 或 `8000/admin-ui/`
 
-| 端口 | 谁开的 | 用来干嘛 |
-|---|---|---|
-| `8000` | FastAPI | API、瓦片代理、静态挂载，含 `/app/` 和 `/admin-ui/` |
-| `5174` | React Vite | 主 WebGIS 开发入口，热更新，代理 API 到 `8000` |
-| `5173` | Vue Vite | Admin 开发入口，热更新，代理 API 到 `8000` |
+---
 
-改前端看 `5174` / `5173`；只想跑集成版看 `8000/app/` / `8000/admin-ui/`。
+## 登录说明
 
-> 只想单独起某个服务（高级）：纯后端 `.venv\Scripts\python.exe platform\webgis\serve.py`；单个前端 `cd platform\webgis-react && npm.cmd run dev`（或 `platform\admin-vue`）。
+模板配置里默认关闭登录保护：
 
-## 数据放哪
+```yaml
+server:
+  enable_auth: false
+  users:
+    - username: "admin"
+      password: "changeme"
+```
+
+在 `enable_auth: false` 时，登录接口会直接签发本地 session，方便开发和演示。
+
+如果要让别人访问，或者准备部署到局域网，请务必修改：
+
+```yaml
+server:
+  enable_auth: true
+  users:
+    - username: "admin"
+      password: "请换成自己的强密码"
+```
+
+如果把后端监听地址改成 `0.0.0.0`，更要打开登录保护。
+
+---
+
+## 数据放在哪里
+
+项目不会自带真实业务数据。真实档案、照片、图纸、日志、边界、DEM、三维模型都放在 `data/input/` 下面。
 
 ```text
 data/
 ├─ input/
 │  ├─ 01_archives/        # 四普档案 DOCX，可按乡镇分目录
-│  ├─ 02_worklogs/        # 外业工作日志 Excel、轨迹照片等
+│  ├─ 02_worklogs/        # 外业工作日志 Excel
 │  ├─ 03_boundaries/      # 县、乡镇、村边界 SHP 或 GeoJSON
 │  ├─ 04_dem/             # DEM GeoTIFF
 │  └─ 05_models_3d/       # 三维模型或 3D Tiles
@@ -106,11 +224,13 @@ data/
    └─ logs/               # 管线和后台任务日志
 ```
 
-`data/input/` 不提交。大体积缓存、瓦片、日志、模型产物也不提交。仓库只管代码和必要目录骨架。
+`data/input/` 不提交到 Git。大体积缓存、瓦片、日志、模型产物也不提交。仓库只保留代码和必要目录骨架。
 
-## 数据管线
+---
 
-入口在这里：
+## 运行数据管线
+
+命令行入口：
 
 ```powershell
 .venv\Scripts\python.exe platform\scripts\run_pipeline.py
@@ -119,79 +239,97 @@ data/
 常用命令：
 
 ```powershell
+# 查看管线步骤
 .venv\Scripts\python.exe platform\scripts\run_pipeline.py --list
+
+# 只检查输入和输出，不真正执行
 .venv\Scripts\python.exe platform\scripts\run_pipeline.py --dry-run
+
+# 跳过工作日志步骤
 .venv\Scripts\python.exe platform\scripts\run_pipeline.py --skip 05
+
+# 只运行第 07 步，重建 SQLite
+.venv\Scripts\python.exe platform\scripts\run_pipeline.py --only 07
 ```
 
-默认 7 步：
+Linux / 麒麟下把 `.venv\Scripts\python.exe` 换成对应 Python：
 
-| Step | 脚本 | 产物 | 说明 |
-|---|---|---|---|
-| 01 | `step01_convert_docs.py` | Markdown | DOCX 档案结构化 |
-| 02 | `step02_build_dataset.py` | CSV / JSON / GeoJSON | 生成核心数据集 |
-| 03 | `step03_extract_photos.py` | 照片索引 | 抽档案照片 |
-| 04 | `step04_extract_drawings.py` | 图纸索引 | 抽档案图纸 |
-| 05 | `step05_convert_worklogs.py` | PDF | 工作日志转 PDF，可跳过 |
-| 06 | `step06_prepare_boundaries.py` | WGS-84 GeoJSON | 行政边界处理，可跳过 |
-| 07 | `step07_build_db.py` | SQLite | 生成 `relics.db`，含 R-Tree、FTS5、审计表 |
+```bash
+python platform/scripts/run_pipeline.py --dry-run
+```
 
-你也可以在 Vue Admin 的“管线工作台”里手动跑这些步骤。大文件进来以后，手动触发比开一堆 BAT 舒服。
+管线完成后，会在：
 
-## 功能
+```text
+data/output/logs/pipeline_manifest.json
+```
 
-### WebGIS 主图
+记录每一步的执行情况、输入输出状态、耗时和错误信息。
 
-- React + Cesium 主地图。
-- 支持离线/在线底图、行政边界、点位、面域、地形、主视角记忆。
-- 支持 `/api/relics/by-bbox` 视口查询，地图移动后只拉当前区域数据。
-- Dashboard 统计面板，多维交叉筛选联动（类别 / 级别 / 年代 / 现状 / 乡镇等）。
-- 支持瓦片下载、缓存统计、下载历史和离线覆盖显示。
+---
 
-### 文物档案
+## 配置文件
 
-- 文物基本信息、类别、级别、年代、地址、坐标。
-- 照片、图纸、PDF、简介、三维模型、工作日志联动。
-- SQLite 优先，JSON fallback。
-- R-Tree 做空间检索，FTS5 做全文检索。
+主配置文件是：
 
-### 管理后台
+```text
+config.yaml
+```
 
-- Vue 3 + Element Plus。
-- Dashboard、管线工作台、文物 CRUD、批量编辑、导入导出、审计日志。
-- 支持回收站、相邻文物查询、地图框选、拾点回传。
-- 后台写操作进入 `audit_log`，编辑使用版本字段降低覆盖风险。
+第一次启动会从 `config.example.yaml` 自动复制一份。
 
-### AI 与辅助能力
+建议重点检查这些字段：
 
-- AI 知识库问答入口。
-- 回答可联动文物和工作日志。
-- 外业路线与村庄覆盖率分析。
-- 本地 DEM terrain tile 服务。
+| 配置                           | 说明                   |
+| ---------------------------- | -------------------- |
+| `project.name`               | 县区简称，页面中常用           |
+| `project.full_name`          | 平台完整名称               |
+| `project.data_cutoff`        | 数据截止日期               |
+| `geo.center`                 | 地图默认中心点              |
+| `geo.bounds`                 | 项目范围、瓦片下载范围、DEM 裁剪范围 |
+| `geo.source_crs`             | 档案点位源坐标系             |
+| `geo.boundaries.*`           | 行政边界投影参数             |
+| `administrative.county_name` | 县区名称                 |
+| `administrative.townships`   | 乡镇列表                 |
+| `features.*`                 | 三维、工作日志、DEM、AI 等功能开关 |
+| `api.*`                      | AI、Cesium 等外部服务配置    |
+| `server.*`                   | 后端端口、登录保护、账号密码       |
+| `tiles.min_free_disk_mb`     | 瓦片下载最低剩余磁盘空间         |
 
-## 架构
+敏感字段可以写成环境变量占位：
+
+```yaml
+api:
+  siliconflow:
+    key: "${SILICONFLOW_KEY}"
+```
+
+程序启动时会自动读取环境变量。
+
+---
+
+## 项目结构
 
 ```text
 relics-platform-react/
-├─ start-all.bat                  # 一键启动（Windows）
-├─ start-all.sh                   # 一键启动（Linux/麒麟）
-├─ start.py                       # 跨平台启动器（被上面两个调用）
+├─ start-all.bat                  # Windows 一键启动
+├─ start-all.sh                   # Linux / 麒麟一键启动
+├─ start.py                       # 跨平台启动器
 ├─ config.example.yaml            # 配置模板
 ├─ VERSION
 ├─ requirements-dev.txt
 ├─ pytest.ini
-├─ .github/workflows/ci.yml
 ├─ docs/
 ├─ tests/
 └─ platform/
    ├─ scripts/                    # 7 步数据管线
    ├─ webgis/                     # FastAPI 后端
-   ├─ webgis-react/               # React 主前端
-   ├─ admin-vue/                  # Vue 管理后台
+   ├─ webgis-react/               # React + Cesium 主前端
+   ├─ admin-vue/                  # Vue 3 管理后台
    └─ tools/
 ```
 
-后端拆分后的核心文件：
+后端核心模块：
 
 ```text
 platform/webgis/
@@ -204,7 +342,7 @@ platform/webgis/
 ├─ data_admin_queries.py          # Admin 查询
 ├─ data_admin_stats.py            # Admin 统计
 ├─ survey_coverage.py             # 普查轨迹与村庄覆盖
-├─ web_security.py                # CORS 白名单 + 会话令牌（HMAC-SHA256）
+├─ web_security.py                # CORS 与会话安全
 └─ routers/
    ├─ admin.py
    ├─ admin_task_service.py
@@ -225,29 +363,62 @@ platform/webgis-react/src/        # 面向使用者的主地图
 platform/admin-vue/src/           # 面向维护者的管理后台
 ```
 
-## 实现方式
+---
 
-- **后端**：FastAPI 组合根（`main.py`）+ 中间件（CORS 白名单、HMAC-SHA256 会话令牌）。
-  数据层 `DataStore` 双模式：优先 SQLite（`relics.db`，R-Tree 空间索引 + FTS5 trigram
-  全文 + 审计表 + 乐观锁 + 软删除），无库时回退只读 JSON。视口查询走 R-Tree；另提供
-  `/api/relics/facets`（分面计数）与 `/api/relics/list`（分页）供大数据量时把筛选下推到服务端。
-- **前端**：React 18 + Cesium + Zustand（主图）；Vue 3 + Element Plus + Pinia（后台）。
-  主图点位按视口 `by-bbox` 增量拉取，详情按需懒加载。
-- **数据管线**：`platform/scripts` 下 7 步顺序编排（`run_pipeline.py`）：DOCX→Markdown→
-  数据集→照片 / 图纸→工作日志 PDF→边界→SQLite，坐标统一到 WGS-84。
-- **配置**：`config.yaml`（从 `config.example.yaml` 复制），县区名称 / 视角 / 边界 / 密钥等集中管理。
+## 技术栈
 
-## 测试
+### 后端
 
-后端：
+* FastAPI
+* SQLite
+* R-Tree
+* FTS5
+* HMAC-SHA256 session
+* Python 数据管线脚本
+
+### 主前端
+
+* React 18
+* Cesium
+* Zustand
+* three.js
+* ECharts
+* PDF.js
+
+### 管理后台
+
+* Vue 3
+* Element Plus
+* Pinia
+* Vite
+
+### 数据处理
+
+* DOCX 转 Markdown
+* CSV / JSON / GeoJSON 生成
+* 图片和图纸抽取
+* 工作日志转 PDF
+* 行政边界转换
+* SQLite 建库
+
+---
+
+## 测试与构建
+
+后端测试：
 
 ```powershell
 .venv\Scripts\python.exe -m pytest
+```
+
+管线检查：
+
+```powershell
 .venv\Scripts\python.exe platform\scripts\run_pipeline.py --list
 .venv\Scripts\python.exe platform\scripts\run_pipeline.py --dry-run --skip 01 --skip 05
 ```
 
-React：
+React 主前端：
 
 ```powershell
 cd platform\webgis-react
@@ -255,7 +426,7 @@ npm.cmd run type-check
 npm.cmd run build
 ```
 
-Vue Admin：
+Vue 管理后台：
 
 ```powershell
 cd platform\admin-vue
@@ -263,50 +434,120 @@ npm.cmd run typecheck
 npm.cmd run build
 ```
 
-CI 在 `.github/workflows/ci.yml`，push 和 pull request 会跑 Python 测试、React 构建、Vue 构建。
+CI 配置在：
+
+```text
+.github/workflows/ci.yml
+```
+
+push 和 pull request 会跑 Python 测试、React 构建和 Vue 构建。
+
+---
 
 ## 常见问题
 
-### 后台登录一直 401？
+### 1. 为什么启动后没有真实文物数据？
 
-先看 `config.yaml`：
+仓库不包含真实业务数据。需要把自己的 DOCX 档案、边界、日志、照片、图纸、DEM、模型等放进 `data/input/`，然后运行数据管线。
+
+### 2. 后台登录一直 401 怎么办？
+
+检查 `config.yaml`：
 
 ```yaml
 server:
   enable_auth: false
-  users:
-    - username: "admin"
-      password: "changeme"
 ```
 
-`enable_auth: false` 时登录接口会直接签发本地 session；`true` 时才校验账号密码。改了配置要重启后端。
+如果是 `false`，登录接口会直接通过。
+如果改成 `true`，就必须使用 `server.users` 中配置的用户名和密码。改完配置后要重启后端。
 
-### 下载地图时报 zoom 溢出？
+### 3. `8000`、`5173`、`5174` 怎么区分？
 
-V1.1 后已经做了防护。层级只接受 `1..17`，比如 `12,13,1415,16` 会被清洗成 `12,13,16`。
+* `8000`：FastAPI 后端。
+* `5173`：Vue 管理后台开发入口。
+* `5174`：React WebGIS 主图开发入口。
 
-### `8000/app` 和 `5174` 到底看哪个？
+日常演示一般打开 `5174`。做数据维护时打开 `5173`。
 
-看你在干嘛。只跑后端就看 `8000/app`；改 React 前端就看 `5174`；改 Vue Admin 就看 `5173`。
+### 4. 下载瓦片时提示范围或 zoom 不合法？
 
-## 文档
+瓦片下载有层级和范围保护。建议先缩小范围，再选择合理层级。当前层级一般建议控制在 `1..17`。
+
+### 5. AI 问答没有反应？
+
+检查：
+
+* `features.enable_ai_chat` 是否开启。
+* `api.siliconflow.key` 是否配置。
+* 当前网络环境是否能访问对应 API。
+* 如果是内网部署，可以先关闭 AI 功能，不影响地图和档案管理主流程。
+
+---
+
+## 文档入口
 
 ```text
 docs/
 ├─ README.md
 ├─ architecture/v1.1-architecture.md
 ├─ refactor/execution-log.md
+├─ refactor/v1.2-agent-plan.md
 └─ releases/
    ├─ v1.1.0.md
    └─ v1.1.5.md
 ```
 
-## 变更记录
+建议阅读顺序：
 
-当前版本 **V1.1.5**。各版本发布说明见 [docs/releases/](docs/releases/)；逐项修改与决策记录在 [logs/](logs/)。
+1. `README.md`：先跑起来。
+2. `docs/architecture/v1.1-architecture.md`：看整体架构。
+3. `docs/refactor/execution-log.md`：看已经做过哪些调整。
+4. `docs/refactor/v1.2-agent-plan.md`：看后续重构计划。
+5. `docs/releases/`：看版本变化。
 
-如果你只是想跑起来，记住一条命令就够了：
+---
+
+## 当前状态
+
+当前版本是 `V1.1.5`。
+
+这个版本已经完成：
+
+* 根目录启动入口收敛为 `start-all.bat` / `start-all.sh`。
+* FastAPI 后端拆分出瓦片、DEM、Admin、文物管理等模块。
+* React 主图和 Vue 后台分工稳定。
+* 管线支持 dry-run 和 manifest。
+* SQLite 支持空间索引、全文检索、审计和软删除。
+* 后端测试、前端类型检查和生产构建已纳入 CI。
+
+后续重点方向：
+
+* 更完整的角色权限体系。
+* 数据库迁移机制。
+* 数据质量报告。
+* 媒体资产管理。
+* 离线工作包。
+* AI 问答来源溯源。
+
+---
+
+## 一句话启动
+
+如果只是想先跑起来，记住这一条就够了：
 
 ```powershell
 .\start-all.bat
+```
+
+Linux / 麒麟：
+
+```bash
+./start-all.sh
+```
+
+然后打开：
+
+```text
+http://127.0.0.1:5174/
 ```
