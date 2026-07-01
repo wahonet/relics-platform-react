@@ -27,8 +27,6 @@ import json
 import sys
 from pathlib import Path
 
-import shapefile
-
 from _common import gcj02_to_wgs84, get_logger, get_paths, load_config
 from crs import gk_inverse  # 高斯-克吕格逆投影,统一从 crs.py 复用
 
@@ -42,10 +40,15 @@ def gk_to_lonlat(x: float, y: float, central_meridian: float) -> tuple[float, fl
 
 
 def _safe_reader(shp_path: Path):
-    """打开 SHP;文件不存在/损坏/过小时返回 None,不抛异常。"""
+    """打开 SHP;文件不存在/损坏/过小时返回 None,不抛异常。
+
+    shapefile(pyshp)是管线依赖,延迟到真正读 SHP 时才导入,使本模块在未装
+    pyshp 的环境(如纯单测)也能被 import,方便测试 need_transform_for_layer 等。
+    """
     if not shp_path.exists() or shp_path.stat().st_size < 100:
         return None
     try:
+        import shapefile  # pyshp,延迟导入
         return shapefile.Reader(str(shp_path))
     except Exception:
         return None
@@ -59,6 +62,32 @@ def is_projected(shp_path: Path) -> bool:
         return abs(sf.shape(0).points[0][0]) > 1_000_000
     except Exception:
         return False
+
+
+# 显式声明的“需要坐标转换”的投影(GCJ-02 经纬度 + 各类高斯投影)。
+# 与 make_transform 的分支保持一致:这些投影即便 is_projected()=False 也必须转换。
+_TRANSFORM_PROJECTIONS = {
+    "gcj02", "gcj-02",
+    "gauss_kruger", "gauss-kruger", "gk", "gauss",
+    "cgcs2000_gk_3", "cgcs2000_gk_6", "cgcs2000_gk",
+}
+_LONLAT_PROJECTIONS = {"none", "wgs84", "cgcs2000"}
+
+
+def need_transform_for_layer(projection: str, shp_path: Path) -> bool:
+    """是否需要做坐标转换,以 projection 配置为准(优先于 is_projected 启发式)。
+
+    GCJ-02 经纬度坐标 x≈116,is_projected() 会返回 False,但它的确需要 GCJ→WGS84
+    转换;若只靠 is_projected 决定是否转换,配置成 gcj02 的边界会原样输出、整体
+    漂移几百米。故:显式 GCJ/GK 投影一律转换,只有显式 lon/lat(WGS84/CGCS2000)
+    才不转换,auto/未知再退回到 is_projected 启发式。
+    """
+    p = (projection or "auto").lower()
+    if p in _LONLAT_PROJECTIONS:
+        return False
+    if p in _TRANSFORM_PROJECTIONS:
+        return True
+    return is_projected(shp_path)
 
 
 def make_transform(projection: str, central_meridian: float, is_gcj02: bool = False):
@@ -79,6 +108,10 @@ def make_transform(projection: str, central_meridian: float, is_gcj02: bool = Fa
     if is_gcj02:
         return lambda x, y: gcj02_to_wgs84(*base(x, y))
     return base
+
+
+def _looks_like_lonlat(x: float, y: float) -> bool:
+    return -180.0 <= x <= 180.0 and -90.0 <= y <= 90.0
 
 
 def shp_to_features(
@@ -112,6 +145,14 @@ def shp_to_features(
                 pts = [list(transform(p[0], p[1])) for p in pts]
             else:
                 pts = [[round(p[0], 7), round(p[1], 7)] for p in pts]
+            # 捕获“无带号 GK(x≈500000)被当成经纬度”这类静默错误:输出必须落在
+            # 经纬度范围内,否则抛错提示检查 projection/central_meridian 配置。
+            if pts and not _looks_like_lonlat(pts[0][0], pts[0][1]):
+                raise ValueError(
+                    f"{shp_path.name} 坐标 ({pts[0][0]:.4g}, {pts[0][1]:.4g}) "
+                    "超出经纬度范围;请检查 geo.boundaries.projection / "
+                    "central_meridian 配置(可能是无带号高斯坐标未被识别为投影)。"
+                )
             rings.append(pts)
         props = {}
         for k, v in rec.items():
@@ -297,23 +338,23 @@ def main() -> int:
     village_features: list[dict] = []
 
     for shp, _ in layers["county"]:
-        proj = is_projected(shp)
-        log.info(f"  [county] {shp.name}: projected={proj}")
-        county_features.extend(shp_to_features(shp, proj, transform, log))
+        need_tx = need_transform_for_layer(projection, shp)
+        log.info(f"  [county] {shp.name}: transform={need_tx}")
+        county_features.extend(shp_to_features(shp, need_tx, transform, log))
 
     for shp, tname in layers["townships"]:
-        proj = is_projected(shp)
-        log.info(f"  [townships] {shp.name}: projected={proj}" + (f" [{tname}]" if tname else ""))
-        feats = shp_to_features(shp, proj, transform, log)
+        need_tx = need_transform_for_layer(projection, shp)
+        log.info(f"  [townships] {shp.name}: transform={need_tx}" + (f" [{tname}]" if tname else ""))
+        feats = shp_to_features(shp, need_tx, transform, log)
         if tname:
             for f in feats:
                 f["properties"]["_township_name"] = tname
         township_features.extend(feats)
 
     for shp, _ in layers["villages"]:
-        proj = is_projected(shp)
-        log.info(f"  [villages] {shp.name}: projected={proj}")
-        village_features.extend(shp_to_features(shp, proj, transform, log))
+        need_tx = need_transform_for_layer(projection, shp)
+        log.info(f"  [villages] {shp.name}: transform={need_tx}")
+        village_features.extend(shp_to_features(shp, need_tx, transform, log))
 
     if county_features:
         save_geojson("county", county_features, out_dir, log)
