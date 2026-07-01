@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import csv
 import json
+import os
+import shutil
 import sqlite3
 import sys
 import time
@@ -295,7 +297,9 @@ def _insert_assets(conn: sqlite3.Connection, photos: list[dict], drawings: list[
     photo_rows = 0
     for p in photos:
         code = (p.get("archive_code") or "").strip()
-        path = (p.get("path") or p.get("photo") or "").strip()
+        # step03 写出的列名是 relative_path（历史也可能叫 path/photo），三者都兼容，
+        # 否则真实管线产物一行也进不了 photos 表（见 P0-01 媒体字段契约）。
+        path = (p.get("relative_path") or p.get("path") or p.get("photo") or "").strip()
         if not code or not path:
             continue
         try:
@@ -311,7 +315,8 @@ def _insert_assets(conn: sqlite3.Connection, photos: list[dict], drawings: list[
     drawing_rows = 0
     for d in drawings:
         code = (d.get("archive_code") or "").strip()
-        path = (d.get("path") or d.get("drawing") or "").strip()
+        # step04 写出的列名是 relative_path（历史也可能叫 path/drawing）。
+        path = (d.get("relative_path") or d.get("path") or d.get("drawing") or "").strip()
         if not code or not path:
             continue
         try:
@@ -385,19 +390,36 @@ def _refresh_has_photo(conn: sqlite3.Connection) -> None:
     )
 
 
+def _validate_db(conn: sqlite3.Connection, *, expected_relics: int) -> None:
+    """替换前的冒烟校验:主表行数对得上、R-Tree/FTS 虚表可查。
+
+    任何一步失败都应在这里抛出,阻止用半成品库覆盖旧库。
+    """
+    n = conn.execute("SELECT COUNT(*) FROM relics").fetchone()[0]
+    if n != expected_relics:
+        raise RuntimeError(
+            f"建库校验失败:relics 行数 {n} != 插入 {expected_relics}"
+        )
+    # 虚表可能“建好但不可查”(如 SQLite 未编译 trigram/rtree),在这里会抛。
+    conn.execute("SELECT COUNT(*) FROM relics_rtree").fetchone()
+    conn.execute("SELECT COUNT(*) FROM relics_fts").fetchone()
+
+
 def build_db(db_path: Path, dataset_dir: Path, pdf_dir: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    # 全量重建:先删后建。
-    if db_path.exists():
-        db_path.unlink()
 
-    log.info("[DB] 创建 %s", db_path)
-    conn = sqlite3.connect(str(db_path))
+    # 先校验主输入,再动旧库:JSON 缺失/损坏/格式错时直接退出,旧库保持不动。
+    relics = _load_relics_json(dataset_dir / "relics_full.json")
+    log.info("[DB] 读到 %d 条文物", len(relics))
+
+    tmp_path = db_path.with_name(db_path.name + ".tmp")
+    if tmp_path.exists():
+        tmp_path.unlink()
+
+    log.info("[DB] 构建临时库 %s", tmp_path)
+    conn = sqlite3.connect(str(tmp_path))
     try:
         conn.executescript(SCHEMA_SQL)
-
-        relics = _load_relics_json(dataset_dir / "relics_full.json")
-        log.info("[DB] 读到 %d 条文物", len(relics))
 
         pdf_map = _scan_pdf_dir(pdf_dir)
         if pdf_map:
@@ -415,12 +437,28 @@ def build_db(db_path: Path, dataset_dir: Path, pdf_dir: Path) -> None:
         log.info("[DB] 已插入 polygons %d 行", n_poly)
 
         _refresh_has_photo(conn)
+        _validate_db(conn, expected_relics=n_relics)
 
         conn.commit()
         conn.execute("ANALYZE;")
         conn.commit()
-    finally:
+    except Exception:
         conn.close()
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
+    else:
+        conn.close()
+
+    # 旧库先备份,再原子替换;替换失败/中途异常时旧库不受影响。
+    if db_path.exists():
+        bak_path = db_path.with_name(f"{db_path.name}.bak.{int(time.time())}")
+        shutil.copy2(db_path, bak_path)
+        log.info("[DB] 已备份旧库: %s", bak_path)
+
+    os.replace(tmp_path, db_path)
 
     size_kb = db_path.stat().st_size / 1024
     log.info("[DB] 完成。数据库大小 %.1f KB", size_kb)

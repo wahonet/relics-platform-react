@@ -73,3 +73,90 @@ def test_build_db_indexes_are_queryable(tmp_path):
         assert hit is not None and hit[0] == "Q001"
     finally:
         conn.close()
+
+
+def test_build_db_accepts_real_step03_relative_path(tmp_path):
+    """P0-01:step03 真实产出的 photo_index.csv 列名是 relative_path,
+    step07 必须据此把照片灌进库(旧实现只读 path → 真实管线照片全丢)。"""
+    ds = tmp_path / "dataset"
+    relics = [
+        {"archive_code": "P001", "name": "确有照片",
+         "center_lng": 116.5, "center_lat": 35.4, "photo_count": 1},
+    ]
+    _write_dataset(
+        ds, relics,
+        "archive_code,relative_path,photo_no,photo_name\n"
+        "P001,P001/a.jpg,Z001,正立面\n",
+    )
+
+    step07.build_db(ds / "relics.db", ds, tmp_path / "no_pdf_dir")
+
+    conn = sqlite3.connect(str(ds / "relics.db"))
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT has_photo FROM relics WHERE code='P001'"
+        ).fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_build_db_accepts_real_step04_relative_path(tmp_path):
+    """P0-01:step04 真实产出的 drawing_index.csv 列名同样是 relative_path。"""
+    ds = tmp_path / "dataset"
+    relics = [
+        {"archive_code": "D001", "name": "有图纸",
+         "center_lng": 116.5, "center_lat": 35.4},
+    ]
+    _write_dataset(ds, relics)
+    (ds / "drawing_index.csv").write_text(
+        "archive_code,relative_path,drawing_no\nD001,D001/t1.jpg,T001\n",
+        encoding="utf-8-sig",
+    )
+
+    step07.build_db(ds / "relics.db", ds, tmp_path / "no_pdf_dir")
+
+    conn = sqlite3.connect(str(ds / "relics.db"))
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM drawings").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_build_db_failed_build_keeps_existing_db(tmp_path, monkeypatch):
+    """P0-02:构建中途失败时,旧库必须原样保留,不能被半成品/空库覆盖。"""
+    ds = tmp_path / "dataset"
+    relics = [
+        {"archive_code": "OLD01", "name": "旧文物",
+         "center_lng": 116.5, "center_lat": 35.4},
+    ]
+    _write_dataset(ds, relics)
+
+    # 1) 先成功建一次,这就是要被保护的“旧库”。
+    step07.build_db(ds / "relics.db", ds, tmp_path / "no_pdf_dir")
+    assert (ds / "relics.db").exists()
+
+    # 2) 注入失败:让 _insert_relics 在重建时抛错。
+    def boom(*args, **kwargs):
+        raise RuntimeError("模拟建库中途失败")
+
+    monkeypatch.setattr(step07, "_insert_relics", boom)
+
+    # 3) 重建应当抛错,且不留下 .tmp。
+    try:
+        step07.build_db(ds / "relics.db", ds, tmp_path / "no_pdf_dir")
+        raised = False
+    except RuntimeError:
+        raised = True
+    assert raised
+    assert not list(ds.glob("*.tmp"))
+
+    # 4) 旧库仍在,且旧数据完整(OLD01 还在,没有被空库覆盖)。
+    conn = sqlite3.connect(str(ds / "relics.db"))
+    try:
+        row = conn.execute(
+            "SELECT code FROM relics WHERE code='OLD01'"
+        ).fetchone()
+        assert row is not None and row[0] == "OLD01"
+    finally:
+        conn.close()

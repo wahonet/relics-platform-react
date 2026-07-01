@@ -43,3 +43,6 @@ desktop.ini
 
 # Local throwaway test runner (env-specific: winget-installs Python, etc.)
 _run_tests.sh
+
+# LLM analysis bundles (generated, do not commit)
+_for_chatgpt/

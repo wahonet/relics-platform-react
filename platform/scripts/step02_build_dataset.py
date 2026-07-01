@@ -71,6 +71,22 @@ def get_field(md: str, section: str, field: str) -> str:
     return get_table_value(get_section_text(md, section), field)
 
 
+def _parse_md_table_row(row: str) -> list[str]:
+    """拆 Markdown 表格行:只去掉首尾边框竖线,保留中间空单元格。
+
+    空的“分组/备注”是真实列位;旧实现 `[c for c in cols if c != '']` 会把中间
+    空单元格一并删掉,导致 测点类型/纬度/经度 全部左移错位(见 P0-03)。
+    """
+    text = row.strip()
+    if not text.startswith("|"):
+        return []
+    if text.startswith("|"):
+        text = text[1:]
+    if text.endswith("|"):
+        text = text[:-1]
+    return [c.strip() for c in text.split("|")]
+
+
 def parse_coordinates(md: str, convert) -> dict:
     result = {
         "center_lat": None,
@@ -93,8 +109,7 @@ def parse_coordinates(md: str, convert) -> dict:
     ]
 
     for row in rows:
-        cols = [c.strip() for c in row.split('|')]
-        cols = [c for c in cols if c != '']
+        cols = _parse_md_table_row(row)
         if len(cols) < 6:
             continue
         try:
