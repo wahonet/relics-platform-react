@@ -37,6 +37,7 @@ from web_security import (  # noqa: E402
     resolve_cors_origins,
     resolve_session_secret,
     sign_session,
+    verify_password,
     verify_session,
 )
 
@@ -162,6 +163,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if any(path == p or path.startswith(p) for p in _PUBLIC_PREFIXES):
             return await call_next(request)
         if not verify_session(request.cookies.get("session"), _SECRET, max_age=_SESSION_MAX_AGE):
+            # API/XHR 请求返回 JSON 401(前端拦截器可统一识别并跳登录);页面请求才 302。
+            is_api = path.startswith("/api/")
+            is_xhr = request.headers.get("x-requested-with", "").lower() == "xmlhttprequest"
+            if is_api or is_xhr:
+                return JSONResponse({"detail": "未登录或会话已过期"}, status_code=401)
             from urllib.parse import quote
 
             target = path
@@ -495,6 +501,10 @@ async def api_login(body: _LoginBody):
 
     users = (_CONFIG.get("server") or {}).get("users") or []
     for user in users:
-        if user.get("username") == body.username and user.get("password") == body.password:
+        if user.get("username") != body.username:
+            continue
+        # 优先 password_hash(pbkdf2),兼容旧 config 的明文 password。
+        stored = user.get("password_hash") or user.get("password")
+        if stored is not None and verify_password(stored, body.password):
             return _login_response(body.username)
     return JSONResponse({"detail": "用户名或密码错误"}, status_code=401)

@@ -149,6 +149,10 @@ server:
   users:
     - username: "admin"
       password: "changeme"
+      # 生产推荐改用 password_hash(pbkdf2_sha256),避免配置泄露即密码泄露。
+      # 生成: .venv\Scripts\python.exe -c "from web_security import hash_password as h; print(h('你的密码'))"
+      # 配置 password_hash 后可删除明文 password;二者并存时优先用 password_hash。
+      # password_hash: "pbkdf2_sha256$260000$xxxx$xxxx"
 
 # ── 瓦片下载 ─────────────────────────────────────────────────
 tiles:
