@@ -171,3 +171,43 @@ def verify_session(
         if ts - iat > int(max_age):
             return None
     return payload
+
+
+# ── 密码哈希(P1-08:兼容旧明文,新增 pbkdf2_sha256)──────────────────
+_PBKDF2_PREFIX = "pbkdf2_sha256$"
+_PBKDF2_ITERATIONS = 260_000
+
+
+def hash_password(password: str, *, iterations: int = _PBKDF2_ITERATIONS) -> str:
+    """生成 ``pbkdf2_sha256$iterations$salt$digest``(Django 风格)哈希。
+
+    用于把 config 里的明文 password 换成 password_hash。可用一行生成:
+    ``python -c "from web_security import hash_password as h; print(h('你的密码'))"``
+    """
+    salt = secrets.token_urlsafe(16)
+    dk = hashlib.pbkdf2_hmac(
+        "sha256", (password or "").encode("utf-8"), salt.encode("utf-8"), iterations
+    )
+    return f"pbkdf2_sha256${iterations}${salt}${base64.urlsafe_b64encode(dk).decode('ascii')}"
+
+
+def verify_password(stored: str | None, candidate: str) -> bool:
+    """校验密码,常数时间比较。
+
+    - ``pbkdf2_sha256$...`` → 按哈希校验(生产推荐)。
+    - 其它(旧 config 的明文 password)→ 仍兼容,compare_digest 比较,平滑过渡。
+      生产应改用 password_hash,避免配置泄露即密码泄露。
+    """
+    if not stored:
+        return False
+    if stored.startswith(_PBKDF2_PREFIX):
+        try:
+            _, it_s, salt, digest = stored.split("$", 3)
+            dk = hashlib.pbkdf2_hmac(
+                "sha256", (candidate or "").encode("utf-8"), salt.encode("utf-8"), int(it_s)
+            )
+            calc = base64.urlsafe_b64encode(dk).decode("ascii")
+            return hmac.compare_digest(calc, digest)
+        except (ValueError, TypeError):
+            return False
+    return hmac.compare_digest(stored, candidate or "")

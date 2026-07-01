@@ -10,7 +10,9 @@ import csv
 import json
 import re
 import sys
+import zipfile
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
@@ -631,27 +633,95 @@ async def list_tasks(limit: int = 30):
     return items[:limit]
 
 
+# ── DOCX 上传安全(P0-03):路径沙箱 + 文件名白名单 + 限流读取 + zip 结构校验 ──
+MAX_DOCX_BYTES = 50 * 1024 * 1024                # 单个 DOCX 压缩后上限 50MB
+MAX_DOCX_UNCOMPRESSED_BYTES = 300 * 1024 * 1024  # 解压后上限 300MB(防 zip bomb)
+MAX_DOCX_COMPRESSION_RATIO = 200                 # 单成员压缩比上限
+_SAFE_DOCX_NAME = re.compile(r"^[\w一-龥 ._-]{1,160}\.docx$", re.IGNORECASE)
+
+
+def _safe_docx_filename(filename: str | None) -> str:
+    """取 basename 并做白名单校验,拒绝 ../、空名、畸形扩展名。"""
+    name = Path(filename or "").name
+    if not _SAFE_DOCX_NAME.fullmatch(name):
+        raise HTTPException(400, "文件名非法,仅允许普通 .docx 文件名")
+    return name
+
+
+def _safe_child(base: Path, child: str) -> Path:
+    """把 child 拼到 base 下并确认仍在 base 内,杜绝路径穿越。"""
+    base_r = base.resolve()
+    dest = (base_r / child).resolve()
+    try:
+        dest.relative_to(base_r)
+    except ValueError:
+        raise HTTPException(400, "非法路径")
+    return dest
+
+
+async def _read_limited(file: UploadFile, limit: int) -> bytes:
+    """分块读取上传文件,超过 limit 立即拒绝(避免一次性读爆内存)。"""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(413, f"文件超过 {limit // 1024 // 1024}MB")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _validate_docx_zip(raw: bytes) -> None:
+    """校验是合法 DOCX:可解 zip、无内部穿越、体积/压缩比可控、含 word/document.xml。"""
+    try:
+        with zipfile.ZipFile(BytesIO(raw)) as zf:
+            total = 0
+            has_document_xml = False
+            for info in zf.infolist():
+                name = info.filename.replace("\\", "/")
+                if name.startswith("/") or ".." in Path(name).parts:
+                    raise HTTPException(400, "DOCX 内部路径非法")
+                total += int(info.file_size)
+                if total > MAX_DOCX_UNCOMPRESSED_BYTES:
+                    raise HTTPException(413, "DOCX 解压后体积过大")
+                if info.compress_size and info.file_size / max(info.compress_size, 1) > MAX_DOCX_COMPRESSION_RATIO:
+                    raise HTTPException(413, "疑似 zip bomb(压缩比过高)")
+                if name == "word/document.xml":
+                    has_document_xml = True
+            if not has_document_xml:
+                raise HTTPException(400, "不是有效的 Word DOCX(缺 word/document.xml)")
+    except zipfile.BadZipFile as e:
+        raise HTTPException(400, "不是有效的 DOCX/ZIP 文件") from e
+
+
+async def _save_docx_upload(file: UploadFile, township: str) -> tuple[Path, bytes]:
+    """统一的 DOCX 上传落地:文件名白名单 → 路径沙箱 → 限流读取 → zip 校验 → 写盘。"""
+    name = _safe_docx_filename(file.filename)
+    base = get_paths().input_archives.resolve()
+    target_dir = _safe_child(base, township)
+    if not target_dir.is_dir():
+        raise HTTPException(400, f"乡镇文件夹不存在: {township}")
+    raw = await _read_limited(file, MAX_DOCX_BYTES)
+    _validate_docx_zip(raw)
+    dest = _safe_child(target_dir, name)
+    dest.write_bytes(raw)
+    return dest, raw
+
+
 @router.post("/upload-single")
 async def upload_single(
     file: UploadFile = File(...),
     township: str = Form(...),
 ):
     """单文件上传: data/input/01_archives/<township>/<filename>.docx。"""
-    if not file.filename or not file.filename.endswith(".docx"):
-        raise HTTPException(400, "仅支持 .docx 文件")
-
-    target_dir = get_paths().input_archives / township
-    if not target_dir.exists():
-        raise HTTPException(400, f"乡镇文件夹不存在: {township}")
-
-    dest = target_dir / file.filename
-    content = await file.read()
-    dest.write_bytes(content)
-
+    dest, content = await _save_docx_upload(file, township)
     return {
         "message": f"已保存到 {dest}",
         "township": township,
-        "filename": file.filename,
+        "filename": dest.name,
         "size_kb": round(len(content) / 1024, 1),
     }
 
@@ -662,24 +732,14 @@ async def process_single(
     township: str = Form(...),
 ):
     """上传 docx 并立即触发 step01。step01 会跳过已有的有效 md,重复触发安全。"""
-    if not file.filename or not file.filename.endswith(".docx"):
-        raise HTTPException(400, "仅支持 .docx 文件")
-
-    target_dir = get_paths().input_archives / township
-    if not target_dir.exists():
-        raise HTTPException(400, f"乡镇文件夹不存在: {township}")
-
-    dest = target_dir / file.filename
-    content = await file.read()
-    dest.write_bytes(content)
-
+    dest, _ = await _save_docx_upload(file, township)
     task = task_service.start_script_task(
         "step01_convert_docs",
-        initial_log=[f"Uploaded {file.filename} -> {township}"],
-        extra_fields={"single_file": file.filename},
+        initial_log=[f"Uploaded {dest.name} -> {township}"],
+        extra_fields={"single_file": dest.name},
     )
     return {
         "task_id": task["task_id"],
-        "message": f"Uploaded {file.filename} and started extraction",
+        "message": f"Uploaded {dest.name} and started extraction",
         "township": township,
     }
