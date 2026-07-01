@@ -140,7 +140,7 @@ def _offline_only() -> bool:
 
 def _fetch_tile(provider: str, z: int, x: int, y: int) -> bytes | None:
     tpl = TILE_URLS.get(provider)
-    if not tpl:
+    if not tpl or not _valid_tile_coord(z, x, y):
         return None
     s = str((x % 4) + 1) if provider.startswith("gaode") else str(x % 4)
     url = tpl.format(s=s, x=x, y=y, z=z)
@@ -148,7 +148,14 @@ def _fetch_tile(provider: str, z: int, x: int, y: int) -> bytes | None:
     if provider.startswith("gaode"):
         headers["Referer"] = "https://www.amap.com/"
     req = urllib.request.Request(url, headers=headers)
-    return urllib.request.urlopen(req, timeout=20).read()
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        ctype = (resp.headers.get("Content-Type") or "").lower()
+        if "image/" not in ctype and "octet-stream" not in ctype:
+            return None
+        data = resp.read(MAX_TILE_BYTES + 1)
+    if len(data) > MAX_TILE_BYTES:
+        return None
+    return data
 
 
 async def _fetch_and_cache_tile(
@@ -216,6 +223,31 @@ def _tiles_for_bounds(west, south, east, north, z):
     if y1 < y0:
         y0, y1 = y1, y0
     return [(z, x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)]
+
+
+MAX_TILE_TASKS = 200_000        # 下载/估算的瓦片数硬上限,防一次性构造百万级任务
+MAX_TILE_BYTES = 2 * 1024 * 1024  # 单个上游瓦片体积上限,防压缩/超大响应吃内存
+
+
+def _valid_tile_coord(z: int, x: int, y: int) -> bool:
+    """瓦片坐标必须在 zoom 范围内且不越界,避免拼出畸形缓存路径或上游请求。"""
+    if not (TILE_MIN_ZOOM <= z <= TILE_MAX_ZOOM):
+        return False
+    n = 1 << z
+    return 0 <= x < n and 0 <= y < n
+
+
+def _count_tiles_fast(providers: list[str], bbox, zooms: list[int]) -> int:
+    """用数学计数估算瓦片总量,避免为“拒绝超大任务”而先枚举百万级瓦片。"""
+    west, south, east, north = bbox
+    total = 0
+    for z in zooms:
+        if not (TILE_MIN_ZOOM <= z <= TILE_MAX_ZOOM):
+            continue
+        x0, x1 = sorted((_lon_to_tile_x(west, z), _lon_to_tile_x(east, z)))
+        y0, y1 = sorted((_lat_to_tile_y(north, z), _lat_to_tile_y(south, z)))
+        total += (x1 - x0 + 1) * (y1 - y0 + 1) * len(providers)
+    return total
 
 
 def _count_tiles_in_area(providers: list[str], bbox, zooms: list[int]) -> dict:
@@ -397,6 +429,9 @@ def register_tile_routes(app: FastAPI, get_config: ConfigGetter) -> None:
 
     @app.get("/tiles/{provider}/{z}/{x}/{y}")
     async def tile_proxy(provider: str, z: int, x: int, y: int, request: Request):
+        # 先校验 provider 与坐标范围,再动缓存路径(防路径越界与无意义上游请求)。
+        if provider not in TILE_URLS or not _valid_tile_coord(z, x, y):
+            return Response(content=_EMPTY_TILE, media_type="image/png")
         key = f"{provider}/{z}/{x}/{y}"
 
         mem = _tile_mem_get(key)
@@ -422,7 +457,6 @@ def register_tile_routes(app: FastAPI, get_config: ConfigGetter) -> None:
             wants_offline
             or provider in OFFLINE_ONLY_PROVIDERS
             or _offline_only()
-            or provider not in TILE_URLS
         ):
             return Response(content=_EMPTY_TILE, media_type="image/png")
 
@@ -516,6 +550,13 @@ def register_tile_routes(app: FastAPI, get_config: ConfigGetter) -> None:
         z_list = _parse_zoom_list(zooms)
         if not z_list:
             return {"error": "no zoom"}
+        estimated = _count_tiles_fast(prov_list, (west, south, east, north), z_list)
+        if estimated > MAX_TILE_TASKS:
+            return {
+                "error": f"预计 {estimated} 个瓦片,超过上限 {MAX_TILE_TASKS};请缩小范围或降低 zoom",
+                "estimated": estimated,
+                "max": MAX_TILE_TASKS,
+            }
         stat = _count_tiles_in_area(prov_list, (west, south, east, north), z_list)
         return {
             "bbox": {"west": west, "south": south, "east": east, "north": north},
@@ -542,6 +583,15 @@ def register_tile_routes(app: FastAPI, get_config: ConfigGetter) -> None:
         z_list = _parse_zoom_list(zooms)
         if not z_list:
             return {"error": "no zoom"}
+
+        # 先用数学计数拒绝超大任务,再枚举构造任务列表(防百万级瓦片 OOM)。
+        estimated = _count_tiles_fast(prov_list, (west, south, east, north), z_list)
+        if estimated > MAX_TILE_TASKS:
+            return {
+                "error": f"预计 {estimated} 个瓦片,超过上限 {MAX_TILE_TASKS};请缩小范围或降低 zoom",
+                "estimated": estimated,
+                "max": MAX_TILE_TASKS,
+            }
 
         tasks, skipped = [], 0
         for prov in prov_list:

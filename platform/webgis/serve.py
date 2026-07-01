@@ -18,6 +18,25 @@ sys.path.insert(0, str(HERE.parent / "scripts"))
 from _common import load_config  # noqa: E402
 
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def insecure_bind_reason(host: str, enable_auth: bool, allow_insecure: bool) -> str | None:
+    """生产闸门:绑定非回环地址 + 未开鉴权 + 未显式放行 → 返回拒绝理由,否则 None。
+
+    防止"把 server.host 改成 0.0.0.0 却忘了开 enable_auth",导致局域网任意主机
+    可无鉴权调用所有写接口(CRUD/导入/边界清理/瓦片任务)。
+    """
+    if host in _LOOPBACK_HOSTS or enable_auth or allow_insecure:
+        return None
+    return (
+        f"server.host={host} 绑定到非回环地址,但 server.enable_auth=false —— "
+        "局域网任意主机可无鉴权调用所有写接口。请二选一:"
+        "1) 开启 server.enable_auth=true 并配置 server.users;"
+        "2) 仅本机调试且确实要裸跑时,显式设置 server.allow_insecure_demo=true。"
+    )
+
+
 def _open_browser_delayed(url: str, delay: float = 2.0) -> None:
     """延迟打开浏览器,等 uvicorn 绑定端口成功后再访问。"""
     def _worker() -> None:
@@ -40,6 +59,19 @@ def main() -> int:
     srv = cfg.get("server", {}) or {}
     host = str(srv.get("host", "127.0.0.1"))
     port = int(srv.get("port", 8000))
+
+    # 安全闸门:非回环绑定 + 未开鉴权 → 拒绝启动(可用 allow_insecure_demo 显式放行)。
+    reason = insecure_bind_reason(
+        host,
+        bool(srv.get("enable_auth", False)),
+        bool(srv.get("allow_insecure_demo", False)),
+    )
+    if reason:
+        print("[安全] 拒绝启动:", reason, file=sys.stderr)
+        return 2
+    if not srv.get("enable_auth", False):
+        print("[安全] 提示:server.enable_auth=false,登录将直接签发 session(仅限本机调试)。",
+              file=sys.stderr)
 
     proj = cfg.get("project", {}) or {}
     name = proj.get("full_name") or proj.get("name") or "Relics Platform"

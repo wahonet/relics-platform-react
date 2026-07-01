@@ -597,13 +597,25 @@ async def export_boundary(
 
 
 # ── /api/boundaries/clear ─────────────────────────────────────
+_ALLOWED_BOUNDARY_TARGETS = {"county", "townships", "villages"}
+
+
 @router.delete("/boundaries/clear")
 async def clear_boundaries(targets: str = Query("county,townships")):
     """删除指定边界文件;village 文件保留(它通常需要本地 SHP)。"""
     names = {t.strip() for t in targets.split(",") if t.strip()}
+    # 只允许固定目标名,杜绝 targets=../dataset/relics_points 之类的路径穿越删文件。
+    bad = names - _ALLOWED_BOUNDARY_TARGETS
+    if bad:
+        raise HTTPException(status_code=400, detail=f"非法边界目标: {', '.join(sorted(bad))}")
+    root = _OUT_DIR.resolve()
     removed = []
     for name in names:
-        path = _OUT_DIR / f"{name}.geojson"
+        path = (root / f"{name}.geojson").resolve()
+        try:
+            path.relative_to(root)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"非法路径: {name}")
         if path.exists():
             try:
                 path.unlink()

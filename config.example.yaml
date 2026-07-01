@@ -134,6 +134,10 @@ server:
   port: 8000
   # 是否启用访问登录（admin 路由），true 时需在下方设置用户
   enable_auth: false
+  # 安全闸门：当 host 为非回环地址（如 0.0.0.0）且 enable_auth=false 时，后端会拒绝
+  # 启动、并拒绝非本机请求，避免“忘了开鉴权就把后台暴露到局域网”。
+  # 仅当确实要在本机以外裸跑演示时才设为 true（不推荐，等同于无鉴权开放）。
+  allow_insecure_demo: false
   # 会话 Cookie 的签名密钥。留空 = 启动时随机生成（进程重启即登出所有人）；
   # 生产请填一段足够长的随机串，或改用环境变量 RELICS_SECRET_KEY（优先级更高）。
   secret_key: ""
